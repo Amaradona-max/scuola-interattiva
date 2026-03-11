@@ -1,0 +1,726 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scuola Interattiva</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #fff7ed;
+        --card: #ffffff;
+        --text: #431407;
+        --primary: #f97316;
+        --primary-2: #ea580c;
+        --ok: #166534;
+        --err: #991b1b;
+      }
+      * {
+        box-sizing: border-box;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        background: linear-gradient(160deg, #fff7ed, #ffedd5);
+        color: var(--text);
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .card {
+        background: var(--card);
+        border-radius: 16px;
+        padding: 16px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+      }
+      .grid {
+        display: grid;
+        gap: 16px;
+      }
+      .grid-2 {
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      }
+      h1,
+      h2,
+      h3 {
+        margin: 0 0 10px;
+      }
+      input,
+      select,
+      textarea,
+      button {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid #fdba74;
+        padding: 10px;
+        margin-top: 8px;
+      }
+      button {
+        border: none;
+        background: linear-gradient(90deg, var(--primary), var(--primary-2));
+        color: white;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+      }
+      .row button {
+        width: auto;
+      }
+      .msg {
+        margin-top: 8px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        font-size: 14px;
+      }
+      .ok {
+        background: #dcfce7;
+        color: var(--ok);
+      }
+      .err {
+        background: #fee2e2;
+        color: var(--err);
+      }
+      .hidden {
+        display: none;
+      }
+      .top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .small {
+        opacity: 0.8;
+        font-size: 14px;
+      }
+      .section-title {
+        margin-top: 14px;
+      }
+      .guide-panel {
+        color: #000000;
+        border: 2px solid #fb923c;
+      }
+      .guide-panel h2,
+      .guide-panel h3,
+      .guide-panel p,
+      .guide-panel li {
+        color: #000000;
+      }
+      .guide-panel ol {
+        margin: 0;
+        padding-left: 22px;
+        line-height: 1.5;
+      }
+      .guide-checklist {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .guide-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin: 10px 0;
+        color: #000000;
+      }
+      .guide-item input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        margin: 2px 0 0;
+        accent-color: #ea580c;
+      }
+      .guide-progress {
+        margin: 10px 0 6px;
+        font-weight: 700;
+        color: #000000;
+      }
+      .guide-actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 8px;
+      }
+      .guide-reset {
+        width: auto;
+        margin-top: 0;
+        padding: 8px 12px;
+      }
+      ul {
+        margin: 0;
+        padding-left: 20px;
+      }
+      .chat-box {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .bubble {
+        border-radius: 10px;
+        padding: 10px;
+        line-height: 1.4;
+      }
+      .bubble.user {
+        background: #ffedd5;
+      }
+      .bubble.ai {
+        background: #dcfce7;
+      }
+      .action-row {
+        display: flex;
+        gap: 8px;
+      }
+      .action-row button {
+        width: 50%;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap grid">
+      <div class="top">
+        <h1>🎓 Scuola Interattiva</h1>
+        <div class="row">
+          <button id="btnHome">Home</button>
+          <button id="btnGuide">Guida</button>
+          <button id="btnResetSubjects" class="hidden">Resetta Materie</button>
+          <button id="btnLogout" class="hidden">Logout</button>
+        </div>
+      </div>
+
+      <section id="guidePanel" class="card guide-panel hidden">
+        <h2>Guida Passo Passo</h2>
+        <p>Segui questi passaggi per usare l'app correttamente.</p>
+        <p id="guideProgress" class="guide-progress">Completati 0/7 passaggi</p>
+        <div class="guide-actions">
+          <button id="btnResetGuide" class="guide-reset" type="button">Reset checklist</button>
+        </div>
+        <ul id="guideChecklist" class="guide-checklist">
+          <li class="guide-item"><input type="checkbox" data-step="1" /><span>1. Registrati scegliendo Username, Email, Password e ruolo Studente o Docente.</span></li>
+          <li class="guide-item"><input type="checkbox" data-step="2" /><span>2. Dopo la registrazione, usa il login con username e password.</span></li>
+          <li class="guide-item"><input type="checkbox" data-step="3" /><span>3. Una volta entrato, nella Dashboard scegli la materia e scrivi una domanda.</span></li>
+          <li class="guide-item"><input type="checkbox" data-step="4" /><span>4. Premi Invia domanda per ricevere la risposta AI e guadagnare crediti.</span></li>
+          <li class="guide-item"><input type="checkbox" data-step="5" /><span>5. Controlla i crediti e le statistiche nella sezione dashboard.</span></li>
+          <li class="guide-item"><input type="checkbox" data-step="6" /><span>6. Se sei Docente, usa il pannello docente per caricare documenti didattici.</span></li>
+          <li class="guide-item"><input type="checkbox" data-step="7" /><span>7. I documenti caricati compariranno nella lista documenti.</span></li>
+        </ul>
+      </section>
+
+      <section id="home" class="card">
+        <h2>Piattaforma Educativa con AI</h2>
+        <p class="small">Registrati come studente o docente e inizia subito.</p>
+      </section>
+
+      <section id="auth" class="grid grid-2">
+        <div class="card">
+          <h3>Registrazione</h3>
+          <input id="registerUsername" placeholder="Username" />
+          <input id="registerEmail" type="email" placeholder="Email" />
+          <input id="registerPassword" type="password" placeholder="Password" />
+          <select id="registerRole">
+            <option value="student">Studente</option>
+            <option value="teacher">Docente</option>
+          </select>
+          <button id="btnRegister">Registrati</button>
+          <div id="registerMessage"></div>
+        </div>
+        <div class="card">
+          <h3>Login</h3>
+          <input id="loginUsername" placeholder="Username" />
+          <input id="loginPassword" type="password" placeholder="Password" />
+          <button id="btnLogin">Accedi</button>
+          <div id="loginMessage"></div>
+          <h3 class="section-title">Reimposta password</h3>
+          <input id="resetUsername" placeholder="Username" />
+          <input id="resetEmail" type="email" placeholder="Email registrata" />
+          <input id="resetNewPassword" type="password" placeholder="Nuova password" />
+          <button id="btnResetPassword">Reimposta password</button>
+          <div id="resetPasswordMessage"></div>
+        </div>
+      </section>
+
+      <section id="dashboard" class="grid grid-2 hidden">
+        <div class="card">
+          <h3>La tua Dashboard</h3>
+          <p id="userSummary" class="small"></p>
+          <p id="statsSummary" class="small"></p>
+          <h3>Fai una domanda</h3>
+          <select id="questionSubject"></select>
+          <select id="questionDocument"></select>
+          <textarea id="questionText" rows="5" placeholder="Scrivi la tua domanda"></textarea>
+          <div class="action-row">
+            <button id="btnAsk">Invia domanda</button>
+            <button id="btnVoice">🎤 Detta</button>
+          </div>
+          <div id="dashboardMessage"></div>
+          <div id="questionResponse"></div>
+          <div id="chatHistory" class="chat-box"></div>
+          <h3 class="section-title">Crediti recenti</h3>
+          <ul id="creditsList"></ul>
+          <h3 class="section-title">Ultime domande</h3>
+          <ul id="questionsList"></ul>
+        </div>
+
+        <div id="teacherPanel" class="card">
+          <h3>Pannello Docente</h3>
+          <p class="small">Visibile e utilizzabile solo per utenti docente.</p>
+          <input id="docFiles" type="file" multiple accept=".pdf,.docx,.txt,.md,.csv,.json,.html,.htm" />
+          <p class="small">Carica da fonte esterna uno o più file: PDF, DOCX, TXT, MD, CSV, JSON, HTML.</p>
+          <input id="docTitle" placeholder="Titolo documento" />
+          <select id="docSubject"></select>
+          <textarea id="docContent" rows="6" placeholder="Contenuto del documento"></textarea>
+          <button id="btnUploadDoc">Carica documento</button>
+          <div id="teacherMessage"></div>
+          <h3 style="margin-top: 16px">Documenti</h3>
+          <ul id="docsList"></ul>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const API_URL = `${window.location.origin}/api`;
+      let currentUser = JSON.parse(localStorage.getItem("user") || "null");
+      let subjects = [];
+      let documents = [];
+      let speechRecognition = null;
+      let isVoiceActive = false;
+
+      function showMessage(id, text, ok = true) {
+        const el = document.getElementById(id);
+        el.className = `msg ${ok ? "ok" : "err"}`;
+        el.textContent = text;
+      }
+
+      function clearMessage(id) {
+        const el = document.getElementById(id);
+        el.className = "";
+        el.textContent = "";
+      }
+
+      function toggleAuth(visible) {
+        document.getElementById("auth").classList.toggle("hidden", !visible);
+        document.getElementById("dashboard").classList.toggle("hidden", visible);
+        document.getElementById("btnLogout").classList.toggle("hidden", visible);
+      }
+
+      function toggleTeacherTopActions() {
+        const canReset = Boolean(currentUser && currentUser.role === "teacher");
+        document.getElementById("btnResetSubjects").classList.toggle("hidden", !canReset);
+      }
+
+      function toggleGuide() {
+        document.getElementById("guidePanel").classList.toggle("hidden");
+      }
+
+      function getGuideState() {
+        return JSON.parse(localStorage.getItem("guideChecklistState") || "{}");
+      }
+
+      function setGuideState(state) {
+        localStorage.setItem("guideChecklistState", JSON.stringify(state));
+      }
+
+      function updateGuideProgress() {
+        const checkboxes = Array.from(document.querySelectorAll("#guideChecklist input[type='checkbox']"));
+        const completed = checkboxes.filter((cb) => cb.checked).length;
+        document.getElementById("guideProgress").textContent = `Completati ${completed}/7 passaggi`;
+      }
+
+      function initGuideChecklist() {
+        const state = getGuideState();
+        const checkboxes = Array.from(document.querySelectorAll("#guideChecklist input[type='checkbox']"));
+        checkboxes.forEach((checkbox) => {
+          const step = checkbox.dataset.step;
+          checkbox.checked = Boolean(state[step]);
+          checkbox.addEventListener("change", () => {
+            const newState = getGuideState();
+            newState[step] = checkbox.checked;
+            setGuideState(newState);
+            updateGuideProgress();
+          });
+        });
+        updateGuideProgress();
+      }
+
+      function resetGuideChecklist() {
+        const checkboxes = Array.from(document.querySelectorAll("#guideChecklist input[type='checkbox']"));
+        checkboxes.forEach((checkbox) => {
+          checkbox.checked = false;
+        });
+        setGuideState({});
+        updateGuideProgress();
+      }
+
+      async function fetchJSON(path, options = {}) {
+        const response = await fetch(`${API_URL}${path}`, options);
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.error || "Operazione non riuscita");
+        }
+        return payload;
+      }
+
+      async function loadSubjects() {
+        subjects = await fetchJSON("/subjects");
+        const selects = [document.getElementById("questionSubject"), document.getElementById("docSubject")];
+        selects.forEach((select) => {
+          select.innerHTML = `<option value="">Seleziona materia</option>`;
+          subjects.forEach((s) => {
+            const option = document.createElement("option");
+            option.value = s.id;
+            option.textContent = `${s.icon || "📘"} ${s.name}`;
+            select.appendChild(option);
+          });
+        });
+        refreshQuestionDocuments();
+      }
+
+      function refreshQuestionDocuments() {
+        const select = document.getElementById("questionDocument");
+        const selectedSubjectId = Number(document.getElementById("questionSubject").value);
+        const filtered = selectedSubjectId
+          ? documents.filter((doc) => Number(doc.subjectId) === selectedSubjectId)
+          : documents;
+        select.innerHTML = `<option value="">RAG automatico su tutti i documenti della materia</option>`;
+        filtered.forEach((doc) => {
+          const option = document.createElement("option");
+          option.value = doc.id;
+          option.textContent = `${doc.title} · ${doc.subjectName}`;
+          select.appendChild(option);
+        });
+      }
+
+      async function loadStats() {
+        const stats = await fetchJSON(`/stats/user/${currentUser.id}`);
+        const credits = await fetchJSON(`/credits/${currentUser.id}`);
+        document.getElementById("userSummary").textContent =
+          `Utente: ${currentUser.username} · Ruolo: ${currentUser.role} · Crediti: ${credits.totalCredits}`;
+        document.getElementById("statsSummary").textContent =
+          `Domande totali: ${stats.totalQuestions} · Qualità media: ${stats.averageQualityScore}`;
+        const creditsList = document.getElementById("creditsList");
+        creditsList.innerHTML = "";
+        if (!credits.history || credits.history.length === 0) {
+          const li = document.createElement("li");
+          li.textContent = "Nessun credito registrato al momento.";
+          creditsList.appendChild(li);
+          return;
+        }
+        credits.history.slice(0, 5).forEach((item) => {
+          const li = document.createElement("li");
+          li.textContent = `+${item.amount} crediti · ${item.description}`;
+          creditsList.appendChild(li);
+        });
+      }
+
+      async function loadQuestions() {
+        const questions = await fetchJSON(`/questions/user/${currentUser.id}`);
+        const questionsList = document.getElementById("questionsList");
+        questionsList.innerHTML = "";
+        if (!questions || questions.length === 0) {
+          const li = document.createElement("li");
+          li.textContent = "Non hai ancora inviato domande.";
+          questionsList.appendChild(li);
+          return;
+        }
+        questions.slice(0, 5).forEach((item) => {
+          const li = document.createElement("li");
+          li.textContent = `${item.subjectName}: ${item.question}`;
+          questionsList.appendChild(li);
+        });
+      }
+
+      function toggleTeacherPanel() {
+        const teacherPanel = document.getElementById("teacherPanel");
+        teacherPanel.classList.toggle("hidden", currentUser?.role !== "teacher");
+      }
+
+      async function loadDocuments() {
+        documents = await fetchJSON("/documents");
+        const list = document.getElementById("docsList");
+        list.innerHTML = "";
+        documents.forEach((doc) => {
+          const li = document.createElement("li");
+          li.textContent = `${doc.title} · ${doc.subjectName} · ${doc.teacherName}`;
+          list.appendChild(li);
+        });
+        refreshQuestionDocuments();
+      }
+
+      async function register() {
+        clearMessage("registerMessage");
+        try {
+          const payload = {
+            username: document.getElementById("registerUsername").value.trim(),
+            email: document.getElementById("registerEmail").value.trim(),
+            password: document.getElementById("registerPassword").value,
+            role: document.getElementById("registerRole").value
+          };
+          await fetchJSON("/users/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          showMessage("registerMessage", "Registrazione completata. Ora fai login.");
+        } catch (error) {
+          showMessage("registerMessage", error.message, false);
+        }
+      }
+
+      async function login() {
+        clearMessage("loginMessage");
+        try {
+          const payload = {
+            username: document.getElementById("loginUsername").value.trim(),
+            password: document.getElementById("loginPassword").value
+          };
+          currentUser = await fetchJSON("/users/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          localStorage.setItem("user", JSON.stringify(currentUser));
+          showMessage("loginMessage", "Login effettuato.");
+          await loadDashboard();
+        } catch (error) {
+          showMessage("loginMessage", error.message, false);
+        }
+      }
+
+      async function resetPassword() {
+        clearMessage("resetPasswordMessage");
+        try {
+          const payload = {
+            username: document.getElementById("resetUsername").value.trim(),
+            email: document.getElementById("resetEmail").value.trim(),
+            newPassword: document.getElementById("resetNewPassword").value
+          };
+          await fetchJSON("/users/reset-password", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          showMessage("resetPasswordMessage", "Password reimpostata. Ora puoi fare login.");
+          document.getElementById("loginUsername").value = payload.username;
+          document.getElementById("loginPassword").value = payload.newPassword;
+          document.getElementById("resetNewPassword").value = "";
+        } catch (error) {
+          showMessage("resetPasswordMessage", error.message, false);
+        }
+      }
+
+      async function askQuestion() {
+        clearMessage("dashboardMessage");
+        try {
+          const documentValue = document.getElementById("questionDocument").value;
+          const questionText = document.getElementById("questionText").value.trim();
+          if (!questionText) {
+            showMessage("dashboardMessage", "Scrivi una domanda prima di inviare.", false);
+            return;
+          }
+          const payload = {
+            userId: currentUser.id,
+            subjectId: Number(document.getElementById("questionSubject").value),
+            question: questionText,
+            documentId: documentValue ? Number(documentValue) : null,
+            learningStyle: "visual"
+          };
+          const result = await fetchJSON("/questions/ask", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          const sourceLines = Array.isArray(result.sources)
+            ? result.sources.map((source) => `• ${source.title}`).join("<br>")
+            : "";
+          const sourceHtml = sourceLines ? `<br><br><strong>Fonti usate</strong><br>${sourceLines}` : "";
+          document.getElementById("questionResponse").innerHTML =
+            `<div class="msg ok"><strong>Risposta</strong><br>${result.answer}${sourceHtml}<br><br>Crediti: +${result.creditsEarned}</div>`;
+          const chatHistory = document.getElementById("chatHistory");
+          const userBubble = document.createElement("div");
+          userBubble.className = "bubble user";
+          userBubble.textContent = `Tu: ${payload.question}`;
+          const aiBubble = document.createElement("div");
+          aiBubble.className = "bubble ai";
+          const sourceText = sourceLines ? `\nFonti:\n${sourceLines.replace(/<br>/g, "\n")}` : "";
+          aiBubble.textContent = `AI: ${result.answer}${sourceText}`;
+          chatHistory.prepend(aiBubble);
+          chatHistory.prepend(userBubble);
+          document.getElementById("questionText").value = "";
+          await loadStats();
+          await loadQuestions();
+        } catch (error) {
+          showMessage("dashboardMessage", error.message, false);
+        }
+      }
+
+      async function resetSubjects() {
+        clearMessage("dashboardMessage");
+        if (!currentUser || currentUser.role !== "teacher") {
+          showMessage("dashboardMessage", "Solo i docenti possono resettare le materie.", false);
+          return;
+        }
+        const confirmed = window.confirm(
+          "Confermi il reset totale? Verranno cancellati documenti, domande e crediti di tutte le materie."
+        );
+        if (!confirmed) {
+          return;
+        }
+        try {
+          await fetchJSON("/admin/reset-subjects", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId: currentUser.id })
+          });
+          document.getElementById("chatHistory").innerHTML = "";
+          document.getElementById("questionResponse").innerHTML = "";
+          showMessage("dashboardMessage", "Reset completato. Tutte le materie sono state azzerate.");
+          await loadDashboard();
+        } catch (error) {
+          showMessage("dashboardMessage", error.message, false);
+        }
+      }
+
+      function toggleVoiceInput() {
+        clearMessage("dashboardMessage");
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          showMessage("dashboardMessage", "Dettatura vocale non supportata su questo browser.", false);
+          return;
+        }
+        const voiceButton = document.getElementById("btnVoice");
+        if (!speechRecognition) {
+          speechRecognition = new SpeechRecognition();
+          speechRecognition.lang = "it-IT";
+          speechRecognition.interimResults = false;
+          speechRecognition.maxAlternatives = 1;
+          speechRecognition.onresult = (event) => {
+            const transcript = event.results[0][0].transcript || "";
+            const questionInput = document.getElementById("questionText");
+            questionInput.value = `${questionInput.value} ${transcript}`.trim();
+          };
+          speechRecognition.onend = () => {
+            isVoiceActive = false;
+            voiceButton.textContent = "🎤 Detta";
+          };
+          speechRecognition.onerror = () => {
+            isVoiceActive = false;
+            voiceButton.textContent = "🎤 Detta";
+            showMessage("dashboardMessage", "Errore durante la dettatura vocale.", false);
+          };
+        }
+        if (isVoiceActive) {
+          speechRecognition.stop();
+          isVoiceActive = false;
+          voiceButton.textContent = "🎤 Detta";
+          return;
+        }
+        speechRecognition.start();
+        isVoiceActive = true;
+        voiceButton.textContent = "⏹ Ferma";
+      }
+
+      async function uploadDocument() {
+        clearMessage("teacherMessage");
+        if (currentUser.role !== "teacher") {
+          showMessage("teacherMessage", "Solo i docenti possono caricare documenti.", false);
+          return;
+        }
+        try {
+          const fileInput = document.getElementById("docFiles");
+          const selectedFiles = Array.from(fileInput.files || []);
+          const subjectId = Number(document.getElementById("docSubject").value);
+          if (!subjectId) {
+            showMessage("teacherMessage", "Seleziona prima una materia.", false);
+            return;
+          }
+          if (selectedFiles.length > 0) {
+            const form = new FormData();
+            form.append("subjectId", String(subjectId));
+            form.append("uploadedBy", String(currentUser.id));
+            selectedFiles.forEach((file) => form.append("files", file));
+            const result = await fetchJSON("/documents/upload", {
+              method: "POST",
+              body: form
+            });
+            showMessage(
+              "teacherMessage",
+              `File caricati: ${result.uploadedCount}. File non elaborati: ${result.skippedCount}.`
+            );
+            fileInput.value = "";
+          } else {
+            const payload = {
+              title: document.getElementById("docTitle").value.trim(),
+              subjectId,
+              uploadedBy: currentUser.id,
+              content: document.getElementById("docContent").value.trim()
+            };
+            await fetchJSON("/documents", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload)
+            });
+            showMessage("teacherMessage", "Documento testuale caricato.");
+          }
+          document.getElementById("docTitle").value = "";
+          document.getElementById("docContent").value = "";
+          await loadDocuments();
+        } catch (error) {
+          showMessage("teacherMessage", error.message, false);
+        }
+      }
+
+      async function loadDashboard() {
+        toggleAuth(false);
+        toggleTeacherPanel();
+        toggleTeacherTopActions();
+        await loadSubjects();
+        await loadStats();
+        await loadQuestions();
+        await loadDocuments();
+      }
+
+      function logout() {
+        currentUser = null;
+        localStorage.removeItem("user");
+        toggleAuth(true);
+        toggleTeacherTopActions();
+      }
+
+      document.getElementById("btnRegister").addEventListener("click", register);
+      document.getElementById("btnLogin").addEventListener("click", login);
+      document.getElementById("btnResetPassword").addEventListener("click", resetPassword);
+      document.getElementById("btnAsk").addEventListener("click", askQuestion);
+      document.getElementById("btnVoice").addEventListener("click", toggleVoiceInput);
+      document.getElementById("btnUploadDoc").addEventListener("click", uploadDocument);
+      document.getElementById("btnLogout").addEventListener("click", logout);
+      document.getElementById("btnGuide").addEventListener("click", toggleGuide);
+      document.getElementById("btnResetSubjects").addEventListener("click", resetSubjects);
+      document.getElementById("btnResetGuide").addEventListener("click", resetGuideChecklist);
+      document.getElementById("questionSubject").addEventListener("change", refreshQuestionDocuments);
+      document.getElementById("btnHome").addEventListener("click", () => {
+        if (currentUser) {
+          loadDashboard();
+          return;
+        }
+        toggleAuth(true);
+      });
+
+      (async () => {
+        try {
+          initGuideChecklist();
+          toggleTeacherTopActions();
+          await loadSubjects();
+          if (currentUser) {
+            await loadDashboard();
+          } else {
+            toggleAuth(true);
+          }
+        } catch (error) {
+          showMessage("loginMessage", error.message, false);
+        }
+      })();
+    </script>
+  </body>
+  </html>
