@@ -367,6 +367,30 @@
         return payload;
       }
 
+      function isSessionError(message) {
+        const text = String(message || "").toLowerCase();
+        return text.includes("sessione non valida") || text.includes("utente non trovato");
+      }
+
+      async function ensureCurrentUserValid() {
+        if (!currentUser?.id) {
+          return;
+        }
+        try {
+          await fetchJSON(`/users/${currentUser.id}`);
+        } catch (error) {
+          if (!isSessionError(error.message)) {
+            throw error;
+          }
+          currentUser = null;
+          localStorage.removeItem("user");
+          toggleAuth(true);
+          toggleTeacherTopActions();
+          showMessage("loginMessage", "Sessione scaduta. Fai di nuovo login.", false);
+          throw new Error("Sessione scaduta. Fai di nuovo login.");
+        }
+      }
+
       async function loadSubjects() {
         subjects = await fetchJSON("/subjects");
         const selects = [document.getElementById("questionSubject"), document.getElementById("docSubject")];
@@ -695,7 +719,9 @@
               uploadResults
                 .filter((item) => item.ok)
                 .reduce((sum, item) => sum + (item.skippedCount || 0), 0);
-            const failedFiles = uploadResults.filter((item) => !item.ok).map((item) => item.fileName);
+            const failedFiles = uploadResults
+              .filter((item) => !item.ok)
+              .map((item) => `${item.fileName} (${item.reason})`);
             const failedText = failedFiles.length ? ` Errori: ${failedFiles.join(", ")}.` : "";
             showMessage(
               "teacherMessage",
@@ -726,6 +752,7 @@
       }
 
       async function loadDashboard() {
+        await ensureCurrentUserValid();
         toggleAuth(false);
         toggleTeacherPanel();
         toggleTeacherTopActions();

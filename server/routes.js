@@ -346,6 +346,16 @@ function setupRoutes(app) {
         res.status(400).json({ error: "Subject, docente e file sono obbligatori" });
         return;
       }
+      const user = await get("SELECT id FROM users WHERE id = ?", [uploadedBy]);
+      if (!user) {
+        res.status(401).json({ error: "Sessione non valida. Effettua nuovamente il login." });
+        return;
+      }
+      const subject = await get("SELECT id FROM subjects WHERE id = ?", [subjectId]);
+      if (!subject) {
+        res.status(400).json({ error: "Materia non valida. Ricarica la pagina e seleziona di nuovo la materia." });
+        return;
+      }
       const created = [];
       const skipped = [];
       for (const file of files) {
@@ -370,9 +380,10 @@ function setupRoutes(app) {
             fileName: file.originalname
           });
         } catch (error) {
+          const constraintError = String(error?.message || "").includes("SQLITE_CONSTRAINT");
           skipped.push({
             fileName: file.originalname,
-            reason: error.message || "Errore elaborazione"
+            reason: constraintError ? "Sessione non valida. Effettua logout e nuovo login." : error.message || "Errore elaborazione"
           });
         }
       }
