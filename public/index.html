@@ -198,8 +198,8 @@
           <button id="btnResetGuide" class="guide-reset" type="button">Reset checklist</button>
         </div>
         <ul id="guideChecklist" class="guide-checklist">
-          <li class="guide-item"><input type="checkbox" data-step="1" /><span>1. Registrati scegliendo Username, Email, Password e ruolo Studente o Docente.</span></li>
-          <li class="guide-item"><input type="checkbox" data-step="2" /><span>2. Dopo la registrazione, usa il login con username e password.</span></li>
+          <li class="guide-item"><input type="checkbox" data-step="1" /><span>1. Scegli accesso rapido come Studente o Docente.</span></li>
+          <li class="guide-item"><input type="checkbox" data-step="2" /><span>2. Entra subito in dashboard senza inserire credenziali.</span></li>
           <li class="guide-item"><input type="checkbox" data-step="3" /><span>3. Una volta entrato, nella Dashboard scegli la materia e scrivi una domanda.</span></li>
           <li class="guide-item"><input type="checkbox" data-step="4" /><span>4. Premi Invia domanda per ricevere la risposta AI e guadagnare crediti.</span></li>
           <li class="guide-item"><input type="checkbox" data-step="5" /><span>5. Controlla i crediti e le statistiche nella sezione dashboard.</span></li>
@@ -210,35 +210,17 @@
 
       <section id="home" class="card">
         <h2>Piattaforma Educativa con AI</h2>
-        <p class="small">Registrati come studente o docente e inizia subito.</p>
+        <p class="small">Accesso semplificato senza login: entra subito come studente o docente.</p>
       </section>
 
-      <section id="auth" class="grid grid-2">
-        <div class="card">
-          <h3>Registrazione</h3>
-          <input id="registerUsername" placeholder="Username" />
-          <input id="registerEmail" type="email" placeholder="Email" />
-          <input id="registerPassword" type="password" placeholder="Password" />
-          <select id="registerRole">
-            <option value="student">Studente</option>
-            <option value="teacher">Docente</option>
-          </select>
-          <button id="btnRegister">Registrati</button>
-          <div id="registerMessage"></div>
+      <section id="auth" class="card">
+        <h3>Accesso Rapido</h3>
+        <p class="small">Nessuna password richiesta. Scegli il ruolo e inizia.</p>
+        <div class="action-row">
+          <button id="btnQuickStudent">Entra come Studente</button>
+          <button id="btnQuickTeacher">Entra come Docente</button>
         </div>
-        <div class="card">
-          <h3>Login</h3>
-          <input id="loginUsername" placeholder="Username" />
-          <input id="loginPassword" type="password" placeholder="Password" />
-          <button id="btnLogin">Accedi</button>
-          <div id="loginMessage"></div>
-          <h3 class="section-title">Reimposta password</h3>
-          <input id="resetUsername" placeholder="Username" />
-          <input id="resetEmail" type="email" placeholder="Email registrata" />
-          <input id="resetNewPassword" type="password" placeholder="Nuova password" />
-          <button id="btnResetPassword">Reimposta password</button>
-          <div id="resetPasswordMessage"></div>
-        </div>
+        <div id="accessMessage"></div>
       </section>
 
       <section id="dashboard" class="grid grid-2 hidden">
@@ -386,8 +368,8 @@
           localStorage.removeItem("user");
           toggleAuth(true);
           toggleTeacherTopActions();
-          showMessage("loginMessage", "Sessione scaduta. Fai di nuovo login.", false);
-          throw new Error("Sessione scaduta. Fai di nuovo login.");
+          showMessage("accessMessage", "Sessione scaduta. Seleziona di nuovo accesso rapido.", false);
+          throw new Error("Sessione scaduta. Seleziona di nuovo accesso rapido.");
         }
       }
 
@@ -477,65 +459,20 @@
         refreshQuestionDocuments();
       }
 
-      async function register() {
-        clearMessage("registerMessage");
+      async function quickAccess(role) {
+        clearMessage("accessMessage");
         try {
-          const payload = {
-            username: document.getElementById("registerUsername").value.trim(),
-            email: document.getElementById("registerEmail").value.trim(),
-            password: document.getElementById("registerPassword").value,
-            role: document.getElementById("registerRole").value
-          };
-          await fetchJSON("/users/register", {
+          currentUser = await fetchJSON("/users/quick-access", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-          });
-          showMessage("registerMessage", "Registrazione completata. Ora fai login.");
-        } catch (error) {
-          showMessage("registerMessage", error.message, false);
-        }
-      }
-
-      async function login() {
-        clearMessage("loginMessage");
-        try {
-          const payload = {
-            username: document.getElementById("loginUsername").value.trim(),
-            password: document.getElementById("loginPassword").value
-          };
-          currentUser = await fetchJSON("/users/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({ role })
           });
           localStorage.setItem("user", JSON.stringify(currentUser));
-          showMessage("loginMessage", "Login effettuato.");
+          const roleLabel = currentUser.role === "teacher" ? "Docente" : "Studente";
+          showMessage("accessMessage", `Accesso effettuato come ${roleLabel}.`);
           await loadDashboard();
         } catch (error) {
-          showMessage("loginMessage", error.message, false);
-        }
-      }
-
-      async function resetPassword() {
-        clearMessage("resetPasswordMessage");
-        try {
-          const payload = {
-            username: document.getElementById("resetUsername").value.trim(),
-            email: document.getElementById("resetEmail").value.trim(),
-            newPassword: document.getElementById("resetNewPassword").value
-          };
-          await fetchJSON("/users/reset-password", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-          });
-          showMessage("resetPasswordMessage", "Password reimpostata. Ora puoi fare login.");
-          document.getElementById("loginUsername").value = payload.username;
-          document.getElementById("loginPassword").value = payload.newPassword;
-          document.getElementById("resetNewPassword").value = "";
-        } catch (error) {
-          showMessage("resetPasswordMessage", error.message, false);
+          showMessage("accessMessage", error.message, false);
         }
       }
 
@@ -769,9 +706,8 @@
         toggleTeacherTopActions();
       }
 
-      document.getElementById("btnRegister").addEventListener("click", register);
-      document.getElementById("btnLogin").addEventListener("click", login);
-      document.getElementById("btnResetPassword").addEventListener("click", resetPassword);
+      document.getElementById("btnQuickStudent").addEventListener("click", () => quickAccess("student"));
+      document.getElementById("btnQuickTeacher").addEventListener("click", () => quickAccess("teacher"));
       document.getElementById("btnAsk").addEventListener("click", askQuestion);
       document.getElementById("btnVoice").addEventListener("click", toggleVoiceInput);
       document.getElementById("btnUploadDoc").addEventListener("click", uploadDocument);
@@ -799,7 +735,7 @@
             toggleAuth(true);
           }
         } catch (error) {
-          showMessage("loginMessage", error.message, false);
+          showMessage("accessMessage", error.message, false);
         }
       })();
     </script>

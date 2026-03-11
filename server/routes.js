@@ -189,71 +189,33 @@ function buildRagContext(question, documents) {
 }
 
 function setupRoutes(app) {
-  app.post("/api/users/register", async (req, res, next) => {
+  app.post("/api/users/quick-access", async (req, res, next) => {
     try {
-      const { username, email, password, role = "student", learningStyle = "visual" } = req.body;
-      if (!username || !email || !password) {
-        res.status(400).json({ error: "Campi obbligatori mancanti" });
+      const requestedRole = String(req.body?.role || "student").toLowerCase();
+      const role = requestedRole === "teacher" ? "teacher" : "student";
+      const username = role === "teacher" ? "accesso_docente" : "accesso_studente";
+      const email = role === "teacher" ? "accesso_docente@scuola.app" : "accesso_studente@scuola.app";
+      const existing = await get("SELECT * FROM users WHERE username = ?", [username]);
+      if (existing) {
+        res.json(sanitizeUser(existing));
         return;
       }
-      const result = await run(
+      await run(
         "INSERT INTO users (username, email, password, role, learningStyle) VALUES (?, ?, ?, ?, ?)",
-        [username.trim(), email.trim(), password, role, learningStyle]
+        [username, email, "accesso_libero", role, "visual"]
       );
-      const user = await get("SELECT * FROM users WHERE id = ?", [result.id]);
-      res.status(201).json(sanitizeUser(user));
+      const created = await get("SELECT * FROM users WHERE username = ?", [username]);
+      res.status(201).json(sanitizeUser(created));
     } catch (error) {
       if (String(error.message).includes("UNIQUE")) {
-        res.status(409).json({ error: "Username o email già registrati" });
-        return;
+        const requestedRole = String(req.body?.role || "student").toLowerCase();
+        const username = requestedRole === "teacher" ? "accesso_docente" : "accesso_studente";
+        const user = await get("SELECT * FROM users WHERE username = ?", [username]);
+        if (user) {
+          res.json(sanitizeUser(user));
+          return;
+        }
       }
-      next(error);
-    }
-  });
-
-  app.post("/api/users/login", async (req, res, next) => {
-    try {
-      const { username, password } = req.body;
-      if (!username || !password) {
-        res.status(400).json({ error: "Inserisci username e password" });
-        return;
-      }
-      const user = await get(
-        "SELECT * FROM users WHERE username = ? AND password = ?",
-        [username.trim(), password]
-      );
-      if (!user) {
-        res.status(401).json({ error: "Credenziali non valide" });
-        return;
-      }
-      res.json(sanitizeUser(user));
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.post("/api/users/reset-password", async (req, res, next) => {
-    try {
-      const { username, email, newPassword } = req.body;
-      if (!username || !email || !newPassword) {
-        res.status(400).json({ error: "Inserisci username, email e nuova password" });
-        return;
-      }
-      if (String(newPassword).trim().length < 6) {
-        res.status(400).json({ error: "La nuova password deve avere almeno 6 caratteri" });
-        return;
-      }
-      const user = await get("SELECT id FROM users WHERE username = ? AND email = ?", [
-        username.trim(),
-        email.trim()
-      ]);
-      if (!user) {
-        res.status(404).json({ error: "Utente non trovato con username ed email indicati" });
-        return;
-      }
-      await run("UPDATE users SET password = ? WHERE id = ?", [newPassword, user.id]);
-      res.json({ success: true, message: "Password reimpostata con successo" });
-    } catch (error) {
       next(error);
     }
   });
