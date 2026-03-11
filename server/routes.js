@@ -95,6 +95,18 @@ function tokenizeForSearch(text) {
     .filter((word) => /^\d{1,3}$/.test(word) || word.length >= 4);
 }
 
+function extractRequestedArticle(question) {
+  const match = String(question || "").match(/(?:art\.?|articolo)\s*(\d{1,3})\b/i);
+  if (!match?.[1]) {
+    return null;
+  }
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value < 1 || value > 300) {
+    return null;
+  }
+  return value;
+}
+
 function isArticleCountQuestion(question) {
   const normalized = String(question || "").toLowerCase();
   return (
@@ -109,6 +121,7 @@ function isArticleCountQuestion(question) {
 function buildRagContext(question, documents) {
   const tokens = tokenizeForSearch(question);
   const isCountQuestion = isArticleCountQuestion(question);
+  const requestedArticle = extractRequestedArticle(question);
   const articleHeadings = [];
   const rankedChunks = [];
   for (const doc of documents) {
@@ -123,11 +136,22 @@ function buildRagContext(question, documents) {
     const chunks = splitTextIntoChunks(doc.content, 900, 180);
     chunks.forEach((chunk, index) => {
       const lower = chunk.toLowerCase();
-      const keywordScore = tokens.reduce((acc, token) => acc + (lower.includes(token) ? 1 : 0), 0);
+      const keywordScore = tokens.reduce((acc, token) => {
+        if (/^\d{1,3}$/.test(token)) {
+          return acc + (new RegExp(`\\b${token}\\b`).test(lower) ? 1 : 0);
+        }
+        return acc + (lower.includes(token) ? 1 : 0);
+      }, 0);
       const articleBoost = isCountQuestion && /art\.?\s*\d{1,3}|articolo\s+\d{1,3}/i.test(chunk) ? 3 : 0;
       const edgeBoost = isCountQuestion && (index === 0 || index === chunks.length - 1) ? 2 : 0;
+      const exactArticleBoost = requestedArticle && new RegExp(`(?:^|\\n)\\s*Art\\.?\\s*${requestedArticle}\\b`, "i").test(chunk)
+        ? 12
+        : 0;
+      const hasOtherArticleHeading = requestedArticle && new RegExp("(?:^|\\n)\\s*Art\\.?\\s*(\\d{1,3})\\b", "i").test(chunk)
+        && !new RegExp(`(?:^|\\n)\\s*Art\\.?\\s*${requestedArticle}\\b`, "i").test(chunk);
+      const otherArticlePenalty = hasOtherArticleHeading ? -4 : 0;
       const tocPenalty = /indice|titolo\s+[ivx]+|sezione\s+[ivx]+/i.test(lower) ? -3 : 0;
-      const score = keywordScore + articleBoost + edgeBoost + tocPenalty;
+      const score = keywordScore + articleBoost + edgeBoost + exactArticleBoost + otherArticlePenalty + tocPenalty;
       rankedChunks.push({
         score,
         chunk,

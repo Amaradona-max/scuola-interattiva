@@ -100,14 +100,30 @@ function splitIntoSentences(text) {
     .filter(Boolean);
 }
 
+function tokenInText(text, token) {
+  if (/^\d{1,3}$/.test(token)) {
+    return new RegExp(`\\b${token}\\b`).test(text);
+  }
+  return text.includes(token);
+}
+
+function sanitizeArticleBody(text) {
+  return String(text || "")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n\s+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 function scoreSentence(sentence, keywords, question) {
   const lower = sentence.toLowerCase();
   const hasNumberQuestion = /(quanti|quante|numero|quanti articoli|quanto)/i.test(question);
   const requestedArticle = extractRequestedArticle(question);
-  const baseScore = keywords.reduce((acc, keyword) => acc + (lower.includes(keyword) ? 1 : 0), 0);
+  const baseScore = keywords.reduce((acc, keyword) => acc + (tokenInText(lower, keyword) ? 1 : 0), 0);
   const numberBoost = hasNumberQuestion && /\d+/.test(lower) ? 2 : 0;
   const articleBoost = /articol[oi]/i.test(question) && /articol[oi]/i.test(lower) ? 3 : 0;
-  const exactArticleBoost = requestedArticle && new RegExp(`(?:art\\.?|articolo)\\s*${requestedArticle}\\b`, "i").test(sentence) ? 7 : 0;
+  const exactArticleBoost = requestedArticle && new RegExp(`(?:^|\\n|\\s)(?:art\\.?|articolo)\\s*${requestedArticle}\\b`, "i").test(sentence) ? 7 : 0;
   const tocPenalty = /(indice|titolo\s+[ivx]+|sezione\s+[ivx]+)/i.test(lower) ? -3 : 0;
   const lengthPenalty = sentence.length > 260 ? -2 : 0;
   return baseScore + numberBoost + articleBoost + exactArticleBoost + tocPenalty + lengthPenalty;
@@ -141,20 +157,31 @@ function extractArticleAnswer(question, context) {
   if (!requestedArticle) {
     return null;
   }
-  const source = String(context || "");
-  const directPattern = new RegExp(
+  const source = String(context || "").replace(/\r\n/g, "\n");
+  const strictSectionPattern = new RegExp(
+    `(?:^|\\n)\\s*Art\\.?\\s*${requestedArticle}\\s*[\\.\\-–:]?\\s*(?:\\n|$)([\\s\\S]{0,1200}?)(?=(?:\\n\\s*Art\\.?\\s*\\d{1,3}\\s*[\\.\\-–:]?\\s*(?:\\n|$))|$)`,
+    "i"
+  );
+  const strictMatch = source.match(strictSectionPattern);
+  if (strictMatch) {
+    const body = sanitizeArticleBody(strictMatch[1]);
+    if (body.length > 0) {
+      return `Articolo ${requestedArticle}: ${body}`;
+    }
+  }
+  const looseSectionPattern = new RegExp(
     `(?:^|\\n)\\s*(?:Art\\.?|Articolo)\\s*${requestedArticle}\\b([\\s\\S]{0,800}?)(?=(?:\\n\\s*(?:Art\\.?|Articolo)\\s*\\d{1,3}\\b)|$)`,
     "i"
   );
-  const directMatch = source.match(directPattern);
-  if (directMatch) {
-    const body = normalizeContext(directMatch[1]).replace(/^\s*[-:]\s*/, "").trim();
+  const looseMatch = source.match(looseSectionPattern);
+  if (looseMatch) {
+    const body = sanitizeArticleBody(looseMatch[1]).replace(/^\s*[-:]\s*/, "").trim();
     if (body.length > 0) {
       return `Articolo ${requestedArticle}: ${body}`;
     }
   }
   const sentences = splitIntoSentences(source).filter((sentence) =>
-    new RegExp(`(?:art\\.?|articolo)\\s*${requestedArticle}\\b`, "i").test(sentence)
+    new RegExp(`(?:^|\\s)(?:art\\.?|articolo)\\s*${requestedArticle}\\b`, "i").test(sentence)
   );
   if (sentences.length > 0) {
     return `Articolo ${requestedArticle}: ${sentences.slice(0, 2).join(" ")}`;
