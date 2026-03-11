@@ -92,12 +92,23 @@ function tokenizeForSearch(text) {
     .toLowerCase()
     .split(/[^a-zàèéìòù0-9]+/i)
     .map((word) => word.trim())
-    .filter((word) => word.length >= 4);
+    .filter((word) => /^\d{1,3}$/.test(word) || word.length >= 4);
+}
+
+function isArticleCountQuestion(question) {
+  const normalized = String(question || "").toLowerCase();
+  return (
+    /(quanti|quante)\s+articol/.test(normalized) ||
+    /numero\s+(totale\s+)?(degli?\s+)?articol/.test(normalized) ||
+    /totale\s+articol/.test(normalized) ||
+    /compost[aoei]\s+(?:da\s+)?\d{0,4}\s*articol/.test(normalized) ||
+    /da\s+quanti\s+articoli/.test(normalized)
+  );
 }
 
 function buildRagContext(question, documents) {
   const tokens = tokenizeForSearch(question);
-  const isCountQuestion = /(quanti|quante|numero|articol)/i.test(question);
+  const isCountQuestion = isArticleCountQuestion(question);
   const articleHeadings = [];
   const rankedChunks = [];
   for (const doc of documents) {

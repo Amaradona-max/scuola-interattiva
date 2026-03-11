@@ -66,7 +66,15 @@ function getKeywords(question) {
     .toLowerCase()
     .split(/[^a-zàèéìòù0-9]+/i)
     .map((word) => word.trim())
-    .filter((word) => word.length >= 3 && !ITALIAN_STOPWORDS.has(word));
+    .filter((word) => {
+      if (!word) {
+        return false;
+      }
+      if (/^\d{1,3}$/.test(word)) {
+        return true;
+      }
+      return word.length >= 3 && !ITALIAN_STOPWORDS.has(word);
+    });
 }
 
 function splitIntoSentences(text) {
@@ -95,16 +103,67 @@ function splitIntoSentences(text) {
 function scoreSentence(sentence, keywords, question) {
   const lower = sentence.toLowerCase();
   const hasNumberQuestion = /(quanti|quante|numero|quanti articoli|quanto)/i.test(question);
+  const requestedArticle = extractRequestedArticle(question);
   const baseScore = keywords.reduce((acc, keyword) => acc + (lower.includes(keyword) ? 1 : 0), 0);
   const numberBoost = hasNumberQuestion && /\d+/.test(lower) ? 2 : 0;
   const articleBoost = /articol[oi]/i.test(question) && /articol[oi]/i.test(lower) ? 3 : 0;
+  const exactArticleBoost = requestedArticle && new RegExp(`(?:art\\.?|articolo)\\s*${requestedArticle}\\b`, "i").test(sentence) ? 7 : 0;
   const tocPenalty = /(indice|titolo\s+[ivx]+|sezione\s+[ivx]+)/i.test(lower) ? -3 : 0;
   const lengthPenalty = sentence.length > 260 ? -2 : 0;
-  return baseScore + numberBoost + articleBoost + tocPenalty + lengthPenalty;
+  return baseScore + numberBoost + articleBoost + exactArticleBoost + tocPenalty + lengthPenalty;
+}
+
+function isArticleCountQuestion(question) {
+  const normalized = String(question || "").toLowerCase();
+  return (
+    /(quanti|quante)\s+articol/.test(normalized) ||
+    /numero\s+(totale\s+)?(degli?\s+)?articol/.test(normalized) ||
+    /totale\s+articol/.test(normalized) ||
+    /compost[aoei]\s+(?:da\s+)?\d{0,4}\s*articol/.test(normalized) ||
+    /da\s+quanti\s+articoli/.test(normalized)
+  );
+}
+
+function extractRequestedArticle(question) {
+  const match = String(question || "").match(/(?:art\.?|articolo)\s*(\d{1,3})\b/i);
+  if (!match?.[1]) {
+    return null;
+  }
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value < 1 || value > 300) {
+    return null;
+  }
+  return value;
+}
+
+function extractArticleAnswer(question, context) {
+  const requestedArticle = extractRequestedArticle(question);
+  if (!requestedArticle) {
+    return null;
+  }
+  const source = String(context || "");
+  const directPattern = new RegExp(
+    `(?:^|\\n)\\s*(?:Art\\.?|Articolo)\\s*${requestedArticle}\\b([\\s\\S]{0,800}?)(?=(?:\\n\\s*(?:Art\\.?|Articolo)\\s*\\d{1,3}\\b)|$)`,
+    "i"
+  );
+  const directMatch = source.match(directPattern);
+  if (directMatch) {
+    const body = normalizeContext(directMatch[1]).replace(/^\s*[-:]\s*/, "").trim();
+    if (body.length > 0) {
+      return `Articolo ${requestedArticle}: ${body}`;
+    }
+  }
+  const sentences = splitIntoSentences(source).filter((sentence) =>
+    new RegExp(`(?:art\\.?|articolo)\\s*${requestedArticle}\\b`, "i").test(sentence)
+  );
+  if (sentences.length > 0) {
+    return `Articolo ${requestedArticle}: ${sentences.slice(0, 2).join(" ")}`;
+  }
+  return null;
 }
 
 function extractCountAnswer(question, context) {
-  if (!/(quanti|quante|numero|compost[aoei].*articol|articol[oi])/i.test(question)) {
+  if (!isArticleCountQuestion(question)) {
     return null;
   }
   const explicitMax = String(context || "").match(/numero massimo di articolo rilevato è\s*(\d{1,3})/i);
@@ -140,6 +199,14 @@ function extractCountAnswer(question, context) {
 }
 
 function buildLocalAnswer(question, context) {
+  const articleAnswer = extractArticleAnswer(question, context);
+  if (articleAnswer) {
+    return {
+      answer: articleAnswer,
+      qualityScore: 4,
+      feedback: "Risposta locale basata sul contenuto del documento"
+    };
+  }
   const countAnswer = extractCountAnswer(question, context);
   if (countAnswer) {
     return {
