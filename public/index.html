@@ -354,7 +354,12 @@
       }
 
       async function fetchJSON(path, options = {}) {
-        const response = await fetch(`${API_URL}${path}`, options);
+        let response;
+        try {
+          response = await fetch(`${API_URL}${path}`, options);
+        } catch {
+          throw new Error("Connessione non riuscita. Controlla la rete e riprova.");
+        }
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
           throw new Error(payload.error || "Operazione non riuscita");
@@ -636,17 +641,66 @@
             return;
           }
           if (selectedFiles.length > 0) {
-            const form = new FormData();
-            form.append("subjectId", String(subjectId));
-            form.append("uploadedBy", String(currentUser.id));
-            selectedFiles.forEach((file) => form.append("files", file));
-            const result = await fetchJSON("/documents/upload", {
-              method: "POST",
-              body: form
-            });
+            const allowedExtensions = [".pdf", ".docx", ".txt", ".md", ".csv", ".json", ".html", ".htm"];
+            const maxBytes = 10 * 1024 * 1024;
+            const uploadResults = [];
+            for (const file of selectedFiles) {
+              const lowerName = String(file.name || "").toLowerCase();
+              const isAllowed = allowedExtensions.some((ext) => lowerName.endsWith(ext));
+              if (!isAllowed) {
+                uploadResults.push({
+                  fileName: file.name || "file",
+                  ok: false,
+                  reason: "Formato non supportato"
+                });
+                continue;
+              }
+              if (Number(file.size || 0) > maxBytes) {
+                uploadResults.push({
+                  fileName: file.name || "file",
+                  ok: false,
+                  reason: "File troppo grande (max 10MB)"
+                });
+                continue;
+              }
+              const form = new FormData();
+              form.append("subjectId", String(subjectId));
+              form.append("uploadedBy", String(currentUser.id));
+              form.append("files", file);
+              try {
+                const result = await fetchJSON("/documents/upload", {
+                  method: "POST",
+                  body: form
+                });
+                uploadResults.push({
+                  fileName: file.name || "file",
+                  ok: true,
+                  uploadedCount: Number(result.uploadedCount || 0),
+                  skippedCount: Number(result.skippedCount || 0)
+                });
+              } catch (error) {
+                uploadResults.push({
+                  fileName: file.name || "file",
+                  ok: false,
+                  reason: error.message || "Errore di caricamento"
+                });
+              }
+            }
+            const uploadedCount = uploadResults
+              .filter((item) => item.ok)
+              .reduce((sum, item) => sum + (item.uploadedCount || 0), 0);
+            const skippedCount = uploadResults
+              .filter((item) => !item.ok)
+              .length +
+              uploadResults
+                .filter((item) => item.ok)
+                .reduce((sum, item) => sum + (item.skippedCount || 0), 0);
+            const failedFiles = uploadResults.filter((item) => !item.ok).map((item) => item.fileName);
+            const failedText = failedFiles.length ? ` Errori: ${failedFiles.join(", ")}.` : "";
             showMessage(
               "teacherMessage",
-              `File caricati: ${result.uploadedCount}. File non elaborati: ${result.skippedCount}.`
+              `File caricati: ${uploadedCount}. File non elaborati: ${skippedCount}.${failedText}`,
+              uploadedCount > 0
             );
             fileInput.value = "";
           } else {
