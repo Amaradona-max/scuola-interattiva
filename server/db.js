@@ -6,7 +6,8 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const configuredPath = process.env.DATABASE_PATH || "./data/scuola.db";
+const defaultPath = process.env.VERCEL ? "/tmp/scuola.db" : "./data/scuola.db";
+const configuredPath = process.env.DATABASE_PATH || defaultPath;
 const dbPath = path.isAbsolute(configuredPath)
   ? configuredPath
   : path.join(__dirname, "..", configuredPath);

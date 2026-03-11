@@ -5,3 +5,4 @@ data/*.db
 server/uploads/
 public/uploads/
 *.log
+.vercel
