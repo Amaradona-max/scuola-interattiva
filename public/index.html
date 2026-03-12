@@ -754,7 +754,7 @@
               }
             }
             const allowedExtensions = [".pdf", ".docx", ".txt", ".md", ".csv", ".json", ".html", ".htm"];
-            const maxBytes = 10 * 1024 * 1024;
+            const maxBytes = 50 * 1024 * 1024;
             const invalidFiles = [];
             const validFiles = [];
             selectedFiles.forEach((file, index) => {
@@ -765,7 +765,7 @@
                 return;
               }
               if (Number(file.size || 0) > maxBytes) {
-                invalidFiles.push(`${file.name || "file"} (File troppo grande: max 10MB)`);
+                invalidFiles.push(`${file.name || "file"} (File troppo grande: max 50MB)`);
                 return;
               }
               validFiles.push({
