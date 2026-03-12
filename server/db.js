@@ -2,10 +2,13 @@ import sqlite3 from "sqlite3";
 import path from "path";
 import fs from "fs/promises";
 import { fileURLToPath } from "url";
+import { Pool } from "pg";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
+const usePostgres = Boolean(databaseUrl);
 const defaultPath = process.env.VERCEL ? "/tmp/scuola.db" : "./data/scuola.db";
 const configuredPath = process.env.DATABASE_PATH || defaultPath;
 const dbPath = path.isAbsolute(configuredPath)
@@ -13,6 +16,33 @@ const dbPath = path.isAbsolute(configuredPath)
   : path.join(__dirname, "..", configuredPath);
 
 let db;
+let pool;
+
+function toPostgresSql(sql) {
+  let position = 0;
+  return String(sql || "").replace(/\?/g, () => {
+    position += 1;
+    return `$${position}`;
+  });
+}
+
+function normalizeWriteSqlForPostgres(sql) {
+  const trimmed = String(sql || "").trim().replace(/;$/, "");
+  if (/^insert\s+/i.test(trimmed) && !/\breturning\b/i.test(trimmed)) {
+    return `${trimmed} RETURNING id`;
+  }
+  return trimmed;
+}
+
+function getPostgresPool() {
+  if (!pool) {
+    pool = new Pool({
+      connectionString: databaseUrl,
+      ssl: process.env.DB_SSL === "false" ? false : { rejectUnauthorized: false }
+    });
+  }
+  return pool;
+}
 
 function getDb() {
   if (!db) {
@@ -22,7 +52,15 @@ function getDb() {
   return db;
 }
 
-function run(sql, params = []) {
+async function run(sql, params = []) {
+  if (usePostgres) {
+    const result = await getPostgresPool().query(
+      normalizeWriteSqlForPostgres(toPostgresSql(sql)),
+      params
+    );
+    const id = result.rows?.[0]?.id ?? null;
+    return { id, changes: result.rowCount || 0 };
+  }
   return new Promise((resolve, reject) => {
     getDb().run(sql, params, function onRun(error) {
       if (error) {
@@ -34,7 +72,11 @@ function run(sql, params = []) {
   });
 }
 
-function get(sql, params = []) {
+async function get(sql, params = []) {
+  if (usePostgres) {
+    const result = await getPostgresPool().query(toPostgresSql(sql), params);
+    return result.rows?.[0] || null;
+  }
   return new Promise((resolve, reject) => {
     getDb().get(sql, params, (error, row) => {
       if (error) {
@@ -46,7 +88,11 @@ function get(sql, params = []) {
   });
 }
 
-function all(sql, params = []) {
+async function all(sql, params = []) {
+  if (usePostgres) {
+    const result = await getPostgresPool().query(toPostgresSql(sql), params);
+    return result.rows || [];
+  }
   return new Promise((resolve, reject) => {
     getDb().all(sql, params, (error, rows) => {
       if (error) {
@@ -59,11 +105,16 @@ function all(sql, params = []) {
 }
 
 async function initDatabase() {
-  await fs.mkdir(path.dirname(dbPath), { recursive: true });
+  if (!usePostgres) {
+    await fs.mkdir(path.dirname(dbPath), { recursive: true });
+  }
+
+  const idColumn = usePostgres ? "SERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT";
+  const dateType = usePostgres ? "TIMESTAMP" : "DATETIME";
 
   await run(`
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id ${idColumn},
       username TEXT UNIQUE NOT NULL,
       email TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
@@ -71,29 +122,29 @@ async function initDatabase() {
       learningStyle TEXT NOT NULL DEFAULT 'visual',
       totalCredits INTEGER NOT NULL DEFAULT 0,
       dailyStreak INTEGER NOT NULL DEFAULT 0,
-      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      createdAt ${dateType} NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
   await run(`
     CREATE TABLE IF NOT EXISTS subjects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id ${idColumn},
       name TEXT NOT NULL UNIQUE,
       icon TEXT,
       color TEXT,
       description TEXT,
-      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      createdAt ${dateType} NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
   await run(`
     CREATE TABLE IF NOT EXISTS documents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id ${idColumn},
       title TEXT NOT NULL,
       subjectId INTEGER NOT NULL,
       uploadedBy INTEGER NOT NULL,
       content TEXT NOT NULL,
-      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      createdAt ${dateType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (subjectId) REFERENCES subjects(id) ON DELETE CASCADE,
       FOREIGN KEY (uploadedBy) REFERENCES users(id) ON DELETE CASCADE
     )
@@ -101,7 +152,7 @@ async function initDatabase() {
 
   await run(`
     CREATE TABLE IF NOT EXISTS questions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id ${idColumn},
       userId INTEGER NOT NULL,
       documentId INTEGER,
       subjectId INTEGER NOT NULL,
@@ -109,7 +160,7 @@ async function initDatabase() {
       answer TEXT NOT NULL,
       qualityScore INTEGER NOT NULL DEFAULT 3,
       creditsEarned INTEGER NOT NULL DEFAULT 10,
-      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      createdAt ${dateType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (documentId) REFERENCES documents(id) ON DELETE SET NULL,
       FOREIGN KEY (subjectId) REFERENCES subjects(id) ON DELETE CASCADE
@@ -118,26 +169,30 @@ async function initDatabase() {
 
   await run(`
     CREATE TABLE IF NOT EXISTS badges (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id ${idColumn},
       userId INTEGER NOT NULL,
       badgeType TEXT NOT NULL,
-      unlockedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      unlockedAt ${dateType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
 
   await run(`
     CREATE TABLE IF NOT EXISTS credits (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id ${idColumn},
       userId INTEGER NOT NULL,
       amount INTEGER NOT NULL,
       type TEXT NOT NULL,
       description TEXT,
-      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      createdAt ${dateType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
 
+  await ensureDefaultSubjects();
+}
+
+async function ensureDefaultSubjects() {
   const defaultSubjects = [
     ["Matematica", "📐", "#f97316", "Algebra, geometria e analisi"],
     ["Italiano", "📖", "#ea580c", "Letteratura, grammatica e scrittura"],
@@ -161,4 +216,4 @@ async function initDatabase() {
   }
 }
 
-export { initDatabase, run, get, all };
+export { initDatabase, ensureDefaultSubjects, run, get, all };

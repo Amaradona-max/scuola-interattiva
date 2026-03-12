@@ -1,9 +1,20 @@
 import { askAI } from "./ai.js";
-import { run, get, all } from "./db.js";
+import { run, get, all, ensureDefaultSubjects } from "./db.js";
 import multer from "multer";
 import mammoth from "mammoth";
 import pdfParse from "pdf-parse";
 import path from "path";
+
+function isUniqueViolation(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("unique") || String(error?.code || "") === "23505";
+}
+
+function isConstraintViolation(error) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "");
+  return message.includes("sqlite_constraint") || code === "23503" || code === "23505";
+}
 
 function sanitizeUser(user) {
   return {
@@ -132,17 +143,38 @@ function splitTextIntoChunks(text, chunkSize = 900, overlap = 180) {
   if (!normalized) {
     return [];
   }
-  const chunks = [];
-  let start = 0;
-  while (start < normalized.length) {
-    const end = Math.min(normalized.length, start + chunkSize);
-    chunks.push(normalized.slice(start, end));
-    if (end === normalized.length) {
-      break;
-    }
-    start = Math.max(end - overlap, start + 1);
+  const paragraphs = normalized
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (paragraphs.length === 0) {
+    return [];
   }
-  return chunks;
+  const chunks = [];
+  let current = "";
+  for (const paragraph of paragraphs) {
+    const candidate = current ? `${current}\n\n${paragraph}` : paragraph;
+    if (candidate.length <= chunkSize) {
+      current = candidate;
+      continue;
+    }
+    if (current) {
+      chunks.push(current);
+      const tail = current.slice(Math.max(0, current.length - overlap)).trim();
+      current = tail ? `${tail}\n\n${paragraph}` : paragraph;
+      if (current.length > chunkSize) {
+        chunks.push(current.slice(0, chunkSize));
+        current = current.slice(Math.max(0, chunkSize - overlap));
+      }
+      continue;
+    }
+    chunks.push(paragraph.slice(0, chunkSize));
+    current = paragraph.slice(Math.max(0, chunkSize - overlap));
+  }
+  if (current) {
+    chunks.push(current);
+  }
+  return chunks.map((item) => item.trim()).filter(Boolean);
 }
 
 function tokenizeForSearch(text) {
@@ -178,11 +210,14 @@ function isArticleCountQuestion(question) {
 
 function buildRagContext(question, documents) {
   const tokens = tokenizeForSearch(question);
+  const normalizedQuestion = normalizeForMatch(question);
+  const keyPhrase = tokens.slice(0, 3).join(" ");
   const isCountQuestion = isArticleCountQuestion(question);
   const requestedArticle = extractRequestedArticle(question);
   const articleHeadings = [];
   const rankedChunks = [];
   for (const doc of documents) {
+    const normalizedTitle = normalizeForMatch(doc.title || "");
     if (isCountQuestion) {
       const matches = Array.from(String(doc.content || "").matchAll(/(?:^|\n)\s*Art\.?\s*(\d{1,3})\b/gim))
         .map((item) => Number(item[1]))
@@ -194,12 +229,17 @@ function buildRagContext(question, documents) {
     const chunks = splitTextIntoChunks(doc.content, 900, 180);
     chunks.forEach((chunk, index) => {
       const lower = chunk.toLowerCase();
-      const keywordScore = tokens.reduce((acc, token) => {
+      const matchedTokenCount = tokens.reduce((acc, token) => {
         if (/^\d{1,3}$/.test(token)) {
           return acc + (new RegExp(`\\b${token}\\b`).test(lower) ? 1 : 0);
         }
         return acc + (lower.includes(token) ? 1 : 0);
       }, 0);
+      const keywordScore = matchedTokenCount * 2;
+      const coverageBoost = tokens.length > 0 ? (matchedTokenCount / tokens.length) * 5 : 0;
+      const titleBoost = tokens.some((token) => normalizedTitle.includes(token)) ? 4 : 0;
+      const phraseBoost = keyPhrase && lower.includes(keyPhrase) ? 5 : 0;
+      const questionSentenceBoost = normalizedQuestion && normalizeForMatch(chunk).includes(normalizedQuestion) ? 4 : 0;
       const articleBoost = isCountQuestion && /art\.?\s*\d{1,3}|articolo\s+\d{1,3}/i.test(chunk) ? 3 : 0;
       const edgeBoost = isCountQuestion && (index === 0 || index === chunks.length - 1) ? 2 : 0;
       const exactArticleBoost = requestedArticle && new RegExp(`(?:^|\\n)\\s*Art\\.?\\s*${requestedArticle}\\b`, "i").test(chunk)
@@ -209,7 +249,16 @@ function buildRagContext(question, documents) {
         && !new RegExp(`(?:^|\\n)\\s*Art\\.?\\s*${requestedArticle}\\b`, "i").test(chunk);
       const otherArticlePenalty = hasOtherArticleHeading ? -4 : 0;
       const tocPenalty = /indice|titolo\s+[ivx]+|sezione\s+[ivx]+/i.test(lower) ? -3 : 0;
-      const score = keywordScore + articleBoost + edgeBoost + exactArticleBoost + otherArticlePenalty + tocPenalty;
+      const score = keywordScore
+        + coverageBoost
+        + titleBoost
+        + phraseBoost
+        + questionSentenceBoost
+        + articleBoost
+        + edgeBoost
+        + exactArticleBoost
+        + otherArticlePenalty
+        + tocPenalty;
       rankedChunks.push({
         score,
         chunk,
@@ -220,7 +269,7 @@ function buildRagContext(question, documents) {
     });
   }
   rankedChunks.sort((a, b) => b.score - a.score);
-  const topChunks = rankedChunks.filter((item) => item.score > 0).slice(0, 5);
+  const topChunks = rankedChunks.filter((item) => item.score > 0).slice(0, 6);
   const fallbackChunks = topChunks.length > 0 ? topChunks : rankedChunks.slice(0, 3);
   const header = articleHeadings.length
     ? `Indicazione dai documenti: il numero massimo di articolo rilevato è ${Math.max(...articleHeadings)}.`
@@ -243,10 +292,34 @@ function buildRagContext(question, documents) {
       excerpt: item.chunk.slice(0, 220)
     });
   });
-  return { context: context.slice(0, 4500), sources };
+  return { context: context.slice(0, 6500), sources };
 }
 
 function setupRoutes(app) {
+  async function clearAllDataForTeacher(userId) {
+    if (!userId) {
+      return { ok: false, status: 400, error: "Utente docente obbligatorio" };
+    }
+    const user = await get("SELECT id, role FROM users WHERE id = ?", [userId]);
+    if (!user || user.role !== "teacher") {
+      return { ok: false, status: 403, error: "Operazione consentita solo ai docenti" };
+    }
+    await run("DELETE FROM questions");
+    await run("DELETE FROM documents");
+    await run("DELETE FROM subjects");
+    await run("DELETE FROM credits");
+    await run("DELETE FROM badges");
+    await run("UPDATE users SET totalCredits = 0, dailyStreak = 0");
+    await ensureDefaultSubjects();
+    return {
+      ok: true,
+      payload: {
+        success: true,
+        message: "Pulizia completa eseguita. Puoi ricaricare i documenti da zero."
+      }
+    };
+  }
+
   app.post("/api/users/quick-access", async (req, res, next) => {
     try {
       const requestedRole = String(req.body?.role || "student").toLowerCase();
@@ -265,7 +338,7 @@ function setupRoutes(app) {
       const created = await get("SELECT * FROM users WHERE username = ?", [username]);
       res.status(201).json(sanitizeUser(created));
     } catch (error) {
-      if (String(error.message).includes("UNIQUE")) {
+      if (isUniqueViolation(error)) {
         const requestedRole = String(req.body?.role || "student").toLowerCase();
         const username = requestedRole === "teacher" ? "accesso_docente" : "accesso_studente";
         const user = await get("SELECT * FROM users WHERE username = ?", [username]);
@@ -278,27 +351,27 @@ function setupRoutes(app) {
     }
   });
 
+  app.post("/api/admin/clear-all", async (req, res, next) => {
+    try {
+      const outcome = await clearAllDataForTeacher(req.body?.userId);
+      if (!outcome.ok) {
+        res.status(outcome.status).json({ error: outcome.error });
+        return;
+      }
+      res.json(outcome.payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/admin/reset-subjects", async (req, res, next) => {
     try {
-      const { userId } = req.body;
-      if (!userId) {
-        res.status(400).json({ error: "Utente docente obbligatorio" });
+      const outcome = await clearAllDataForTeacher(req.body?.userId);
+      if (!outcome.ok) {
+        res.status(outcome.status).json({ error: outcome.error });
         return;
       }
-      const user = await get("SELECT id, role FROM users WHERE id = ?", [userId]);
-      if (!user || user.role !== "teacher") {
-        res.status(403).json({ error: "Operazione consentita solo ai docenti" });
-        return;
-      }
-      await run("DELETE FROM questions");
-      await run("DELETE FROM documents");
-      await run("DELETE FROM credits");
-      await run("DELETE FROM badges");
-      await run("UPDATE users SET totalCredits = 0, dailyStreak = 0");
-      res.json({
-        success: true,
-        message: "Materie e progressi azzerati con successo"
-      });
+      res.json(outcome.payload);
     } catch (error) {
       next(error);
     }
@@ -326,6 +399,37 @@ function setupRoutes(app) {
     }
   });
 
+  app.get("/api/ai/status", async (req, res, next) => {
+    try {
+      const rows = await all(
+        `SELECT s.id, s.name, COUNT(d.id) as documentCount
+         FROM subjects s
+         LEFT JOIN documents d ON d.subjectId = s.id
+         GROUP BY s.id, s.name
+         ORDER BY s.name ASC`
+      );
+      const coverage = rows.map((item) => ({
+        subjectId: Number(item.id),
+        subjectName: item.name,
+        documentCount: Number(item.documentCount || 0)
+      }));
+      const uncovered = coverage.filter((item) => item.documentCount === 0).map((item) => item.subjectName);
+      const provider = "openrouter";
+      const aiEnabled = Boolean(process.env.OPENROUTER_API_KEY);
+      const model = String(process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini");
+      res.json({
+        aiEnabled,
+        provider,
+        model,
+        documentTotal: coverage.reduce((acc, item) => acc + item.documentCount, 0),
+        coverage,
+        uncoveredSubjects: uncovered
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/subjects", async (req, res, next) => {
     try {
       const { name, icon = "📘", color = "#f97316", description = "" } = req.body;
@@ -340,7 +444,7 @@ function setupRoutes(app) {
       const subject = await get("SELECT * FROM subjects WHERE id = ?", [result.id]);
       res.status(201).json(subject);
     } catch (error) {
-      if (String(error.message).includes("UNIQUE")) {
+      if (isUniqueViolation(error)) {
         res.status(409).json({ error: "Materia già esistente" });
         return;
       }
@@ -494,7 +598,7 @@ function setupRoutes(app) {
             subjectName: finalSubject.name
           });
         } catch (error) {
-          const constraintError = String(error?.message || "").includes("SQLITE_CONSTRAINT");
+          const constraintError = isConstraintViolation(error);
           skipped.push({
             fileName: file.originalname,
             reason: constraintError ? "Sessione non valida. Effettua logout e nuovo login." : error.message || "Errore elaborazione"

@@ -176,6 +176,81 @@
       .action-row button {
         width: 50%;
       }
+      .tool-box {
+        margin-top: 8px;
+        padding: 10px;
+        border: 1px solid #fdba74;
+        border-radius: 12px;
+        background: #fffaf5;
+      }
+      .concept-map {
+        display: grid;
+        gap: 10px;
+      }
+      .concept-center {
+        justify-self: center;
+        background: linear-gradient(90deg, #fb923c, #f97316);
+        color: #ffffff;
+        border-radius: 999px;
+        padding: 10px 16px;
+        font-weight: 700;
+      }
+      .concept-branches {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 8px;
+      }
+      .concept-node {
+        background: #ffedd5;
+        border: 1px solid #fdba74;
+        border-radius: 10px;
+        padding: 8px;
+        text-align: center;
+        font-weight: 600;
+      }
+      .quiz-option {
+        background: #ffffff;
+        color: var(--text);
+        border: 1px solid #fdba74;
+        margin-top: 6px;
+      }
+      .quiz-option.correct {
+        background: #dcfce7;
+        border-color: #86efac;
+        color: #166534;
+      }
+      .quiz-option.wrong {
+        background: #fee2e2;
+        border-color: #fca5a5;
+        color: #991b1b;
+      }
+      .quiz-feedback {
+        margin-top: 8px;
+        padding: 8px;
+        border-radius: 8px;
+        font-weight: 600;
+      }
+      .quiz-feedback.ok {
+        background: #dcfce7;
+        color: #166534;
+      }
+      .quiz-feedback.err {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+      .quiz-meta {
+        margin-top: 6px;
+        font-size: 13px;
+        opacity: 0.9;
+      }
+      .quiz-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .quiz-actions button {
+        margin-top: 0;
+      }
     </style>
   </head>
   <body>
@@ -185,7 +260,7 @@
         <div class="row">
           <button id="btnHome">Home</button>
           <button id="btnGuide">Guida</button>
-          <button id="btnResetSubjects" class="hidden">Resetta Materie</button>
+          <button id="btnClearAll" class="hidden">Pulire tutto</button>
           <button id="btnLogout" class="hidden">Logout</button>
         </div>
       </div>
@@ -236,9 +311,19 @@
             <button id="btnAsk">Invia domanda</button>
             <button id="btnVoice">🎤 Detta</button>
           </div>
+          <div id="aiStatusNotice"></div>
           <div id="dashboardMessage"></div>
           <div id="questionResponse"></div>
           <div id="chatHistory" class="chat-box"></div>
+          <h3 class="section-title">Mappa concettuale della materia in esame</h3>
+          <button id="btnGenerateConceptMap" type="button">Genera mappa concettuale</button>
+          <div id="conceptMapBox" class="tool-box small"></div>
+          <h3 class="section-title">Test domanda e risposta</h3>
+          <div class="action-row">
+            <button id="btnGenerateQuiz" type="button">Crea test rapido</button>
+            <button id="btnGenerateQuiz5" type="button">Avvia test 5 domande</button>
+          </div>
+          <div id="quizBox" class="tool-box"></div>
           <h3 class="section-title">Crediti recenti</h3>
           <ul id="creditsList"></ul>
           <h3 class="section-title">Ultime domande</h3>
@@ -286,6 +371,14 @@
       let documents = [];
       let speechRecognition = null;
       let isVoiceActive = false;
+      let quizSession = null;
+      const stopWords = new Set([
+        "alla", "alle", "anche", "avere", "con", "come", "dalla", "dalle", "degli", "della", "delle",
+        "dello", "dentro", "dopo", "dove", "fare", "fino", "gli", "hanno", "il", "in", "la", "le", "lo",
+        "ma", "nei", "nel", "nella", "nelle", "nello", "non", "noi", "per", "piu", "poi", "puo", "quale",
+        "quali", "quando", "questo", "quindi", "senza", "sono", "sopra", "sotto", "sua", "sue", "sul", "sulla",
+        "sulle", "sullo", "tra", "una", "uno", "un", "voi", "che", "del", "dei", "di", "da", "ed", "e"
+      ]);
 
       function showMessage(id, text, ok = true) {
         const el = document.getElementById(id);
@@ -327,8 +420,36 @@
       }
 
       function splitAcademicSections(answer) {
-        const normalized = removeInlineSources(answer);
-        const sentences = normalized
+        const normalized = String(answer || "").replace(/\*\*/g, "").trim();
+        const shortMatch = normalized.match(
+          /risposta\s+breve\s*:?\s*([\s\S]*?)(?=\n\s*spiegazione\s*:|\n\s*fonti\s+in\s+calce\s*:|$)/i
+        );
+        const explanationMatch = normalized.match(
+          /spiegazione\s*:?\s*([\s\S]*?)(?=\n\s*fonti\s+in\s+calce\s*:|$)/i
+        );
+        const shortAnswer = String(shortMatch?.[1] || "").trim();
+        const explanationRaw = String(explanationMatch?.[1] || "").trim();
+        if (shortAnswer) {
+          return {
+            shortAnswer,
+            explanation: explanationRaw || "La spiegazione dettagliata non è disponibile per questa risposta."
+          };
+        }
+        const noSources = removeInlineSources(normalized);
+        const sectionMatch = noSources.match(
+          /risposta\s+breve\s*:?\s*([\s\S]*?)\s*(?:spiegazione\s*:?\s*([\s\S]*))?$/i
+        );
+        if (sectionMatch) {
+          const fallbackShort = String(sectionMatch[1] || "").trim();
+          const fallbackExplanation = String(sectionMatch[2] || "").trim();
+          if (fallbackShort) {
+            return {
+              shortAnswer: fallbackShort,
+              explanation: fallbackExplanation || "La spiegazione dettagliata non è disponibile per questa risposta."
+            };
+          }
+        }
+        const sentences = noSources
           .split(/(?<=[.!?])\s+/)
           .map((item) => item.trim())
           .filter(Boolean);
@@ -338,15 +459,361 @@
             explanation: "Riprova con una domanda più specifica o carica un documento di riferimento."
           };
         }
-        const shortAnswer = sentences.slice(0, 2).join(" ");
-        const explanation = sentences.slice(2).join(" ") || "La risposta essenziale è riportata nella sezione precedente.";
-        return { shortAnswer, explanation };
+        const fallbackShortAnswer = sentences.slice(0, 2).join(" ");
+        const fallbackExplanation = sentences.slice(2).join(" ") || "La risposta essenziale è riportata nella sezione precedente.";
+        return { shortAnswer: fallbackShortAnswer, explanation: fallbackExplanation };
       }
 
       function buildAcademicResponse(result) {
         const { shortAnswer, explanation } = splitAcademicSections(result.answer);
         const sourceFooter = buildSourcesFooter(result.sources);
-        return `<div class="msg ok"><strong>Risposta breve</strong><br>${toHtmlLines(shortAnswer)}<br><br><strong>Spiegazione</strong><br>${toHtmlLines(explanation)}${sourceFooter}<br><br>Crediti: +${result.creditsEarned}</div>`;
+        return `<div class="msg ok"><strong>Risposta breve</strong><br>${toHtmlLines(shortAnswer)}<br><br><strong>Spiegazione estesa</strong><br>${toHtmlLines(explanation)}${sourceFooter}<br><br>Crediti: +${result.creditsEarned}</div>`;
+      }
+
+      function normalizeForToken(text) {
+        return String(text || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "");
+      }
+
+      function extractTopKeywords(text, limit = 14) {
+        const counts = new Map();
+        const words = normalizeForToken(text)
+          .split(/[^a-z0-9]+/g)
+          .map((word) => word.trim())
+          .filter((word) => word.length >= 4 && !stopWords.has(word));
+        words.forEach((word) => {
+          counts.set(word, (counts.get(word) || 0) + 1);
+        });
+        return Array.from(counts.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, limit)
+          .map(([word]) => word);
+      }
+
+      function pickSubjectById(subjectId) {
+        return subjects.find((item) => Number(item.id) === Number(subjectId)) || null;
+      }
+
+      function getSelectedSubjectId() {
+        return Number(document.getElementById("questionSubject").value);
+      }
+
+      function getDocumentsForSelectedSubject() {
+        const subjectId = getSelectedSubjectId();
+        if (!subjectId) {
+          return [];
+        }
+        return documents.filter((doc) => Number(doc.subjectId) === subjectId);
+      }
+
+      function resetStudyTools() {
+        quizSession = null;
+        const subject = pickSubjectById(getSelectedSubjectId());
+        const label = subject ? `${subject.icon || "📘"} ${subject.name}` : "la materia selezionata";
+        document.getElementById("conceptMapBox").innerHTML = `Clicca su <strong>Genera mappa concettuale</strong> per creare la mappa di ${escapeHtml(label)}.`;
+        document.getElementById("quizBox").innerHTML =
+          `Clicca su <strong>Crea test rapido</strong> oppure su <strong>Avvia test 5 domande</strong> per allenarti con correzione a colori.`;
+      }
+
+      function generateConceptMap() {
+        clearMessage("dashboardMessage");
+        const subjectId = getSelectedSubjectId();
+        if (!subjectId) {
+          showMessage("dashboardMessage", "Seleziona una materia per creare la mappa concettuale.", false);
+          return;
+        }
+        const subject = pickSubjectById(subjectId);
+        const docs = getDocumentsForSelectedSubject();
+        if (docs.length === 0) {
+          showMessage("dashboardMessage", "Carica almeno un documento della materia per creare la mappa concettuale.", false);
+          return;
+        }
+        const corpus = docs.map((doc) => `${doc.title}\n${doc.content || ""}`).join("\n\n");
+        const subjectTokens = extractTopKeywords(`${subject?.name || ""} ${subject?.description || ""}`, 10);
+        const keywords = extractTopKeywords(corpus, 24)
+          .filter((word) => !subjectTokens.includes(word))
+          .slice(0, 8);
+        if (keywords.length === 0) {
+          showMessage("dashboardMessage", "Contenuti troppo brevi: non riesco a costruire la mappa concettuale.", false);
+          return;
+        }
+        const nodesHtml = keywords
+          .map((word) => `<div class="concept-node">${escapeHtml(word)}</div>`)
+          .join("");
+        document.getElementById("conceptMapBox").innerHTML = `
+          <div class="concept-map">
+            <div class="concept-center">${escapeHtml(`${subject?.icon || "📘"} ${subject?.name || "Materia"}`)}</div>
+            <div class="concept-branches">${nodesHtml}</div>
+          </div>
+        `;
+      }
+
+      function createSentenceCandidates(text) {
+        return String(text || "")
+          .replace(/\s+/g, " ")
+          .split(/(?<=[.!?])\s+/)
+          .map((item) => item.trim())
+          .filter((item) => item.length >= 50 && item.length <= 220 && item.split(/\s+/).length >= 8);
+      }
+
+      function pickFallbackKeyword(sentence) {
+        const tokens = extractTopKeywords(sentence, 6);
+        return tokens[0] || "";
+      }
+
+      function shuffleList(items) {
+        const list = Array.isArray(items) ? [...items] : [];
+        for (let i = list.length - 1; i > 0; i -= 1) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [list[i], list[j]] = [list[j], list[i]];
+        }
+        return list;
+      }
+
+      function extractQuizBaseData() {
+        const subjectId = getSelectedSubjectId();
+        if (!subjectId) {
+          showMessage("dashboardMessage", "Seleziona una materia per creare il test.", false);
+          return null;
+        }
+        const subject = pickSubjectById(subjectId);
+        const docs = getDocumentsForSelectedSubject();
+        if (docs.length === 0) {
+          showMessage("dashboardMessage", "Carica almeno un documento della materia per creare il test.", false);
+          return null;
+        }
+        const corpus = docs.map((doc) => `${doc.title}\n${doc.content || ""}`).join("\n\n");
+        const keywordPool = extractTopKeywords(corpus, 30);
+        const sentences = createSentenceCandidates(corpus);
+        if (sentences.length === 0) {
+          showMessage("dashboardMessage", "Non ci sono frasi sufficienti per generare il test. Aggiungi contenuti più estesi.", false);
+          return null;
+        }
+        return { subject, sentences, keywordPool };
+      }
+
+      function buildQuestionFromSentence(sentence, keywordPool) {
+        if (!sentence) {
+          return null;
+        }
+        const normalized = normalizeForToken(sentence);
+        let correctAnswer = keywordPool.find((word) => new RegExp(`\\b${word}\\b`, "i").test(normalized)) || "";
+        if (!correctAnswer) {
+          correctAnswer = pickFallbackKeyword(sentence);
+        }
+        if (!correctAnswer) {
+          return null;
+        }
+        const maskRegex = new RegExp(`\\b${correctAnswer}\\b`, "i");
+        const maskedSentence = sentence.replace(maskRegex, "_____");
+        const distractors = keywordPool.filter((word) => word !== correctAnswer).slice(0, 8);
+        while (distractors.length < 3) {
+          distractors.push(`termine${distractors.length + 1}`);
+        }
+        const options = shuffleList([correctAnswer, ...distractors.slice(0, 3)]);
+        return { maskedSentence, correctAnswer, options };
+      }
+
+      function buildQuestionSet(sentences, keywordPool, count) {
+        const shuffledSentences = shuffleList(sentences);
+        const questions = [];
+        const usedSignatures = new Set();
+        for (const sentence of shuffledSentences) {
+          const question = buildQuestionFromSentence(sentence, keywordPool);
+          if (!question) {
+            continue;
+          }
+          const signature = `${normalizeForToken(question.maskedSentence)}::${question.correctAnswer}`;
+          if (usedSignatures.has(signature)) {
+            continue;
+          }
+          usedSignatures.add(signature);
+          questions.push(question);
+          if (questions.length >= count) {
+            break;
+          }
+        }
+        let fallbackIndex = 0;
+        while (questions.length < count && shuffledSentences.length > 0 && fallbackIndex < shuffledSentences.length * 5) {
+          const sentence = shuffledSentences[fallbackIndex % shuffledSentences.length];
+          const question = buildQuestionFromSentence(sentence, keywordPool);
+          if (question) {
+            questions.push(question);
+          }
+          fallbackIndex += 1;
+        }
+        return questions.slice(0, count);
+      }
+
+      function renderQuizQuestion({ subject, question, index, total, score = 0, mode = "single" }) {
+        const optionButtons = question.options
+          .map(
+            (option) =>
+              `<button type="button" class="quiz-option" data-option="${escapeHtml(option)}">${escapeHtml(option)}</button>`
+          )
+          .join("");
+        const progress =
+          total > 1
+            ? `<div class="quiz-meta"><strong>Domanda ${index + 1}/${total}</strong> · Punteggio attuale: ${score}</div>`
+            : "";
+        const nextButton = total > 1
+          ? `<div class="quiz-actions"><button id="quizNextButton" type="button" class="hidden" data-quiz-action="next">Prossima domanda</button></div>`
+          : "";
+        document.getElementById("quizBox").innerHTML = `
+          <div class="small"><strong>Materia:</strong> ${escapeHtml(`${subject?.icon || "📘"} ${subject?.name || ""}`)}</div>
+          ${progress}
+          <p style="margin: 8px 0;"><strong>Domanda:</strong> Completa la frase con il termine corretto.</p>
+          <p style="margin: 8px 0;">${escapeHtml(question.maskedSentence)}</p>
+          <div>${optionButtons}</div>
+          <div id="quizFeedback" class="quiz-feedback hidden"></div>
+          ${nextButton}
+        `;
+        const quizBox = document.getElementById("quizBox");
+        quizBox.dataset.correct = question.correctAnswer;
+        quizBox.dataset.answered = "false";
+        quizBox.dataset.mode = mode;
+      }
+
+      function renderQuizFinalResult() {
+        if (!quizSession) {
+          return;
+        }
+        const { score, questions, subject } = quizSession;
+        const total = questions.length;
+        const percent = total > 0 ? Math.round((score / total) * 100) : 0;
+        const passed = percent >= 60;
+        document.getElementById("quizBox").innerHTML = `
+          <div class="small"><strong>Materia:</strong> ${escapeHtml(`${subject?.icon || "📘"} ${subject?.name || ""}`)}</div>
+          <div class="quiz-feedback ${passed ? "ok" : "err"}" style="margin-top: 10px;">
+            Test completato: ${score}/${total} corrette (${percent}%)
+          </div>
+          <div class="quiz-actions">
+            <button type="button" data-quiz-action="restart-5">Rifai test da 5</button>
+            <button type="button" data-quiz-action="quick-test">Crea test rapido</button>
+          </div>
+        `;
+      }
+
+      function buildQuiz() {
+        clearMessage("dashboardMessage");
+        quizSession = null;
+        const base = extractQuizBaseData();
+        if (!base) {
+          return;
+        }
+        const questions = buildQuestionSet(base.sentences, base.keywordPool, 1);
+        if (questions.length === 0) {
+          showMessage("dashboardMessage", "Impossibile creare una domanda valida con i contenuti attuali.", false);
+          return;
+        }
+        renderQuizQuestion({
+          subject: base.subject,
+          question: questions[0],
+          index: 0,
+          total: 1,
+          mode: "single"
+        });
+      }
+
+      function startQuizSession(totalQuestions = 5) {
+        clearMessage("dashboardMessage");
+        const base = extractQuizBaseData();
+        if (!base) {
+          return;
+        }
+        const questions = buildQuestionSet(base.sentences, base.keywordPool, totalQuestions);
+        if (questions.length < totalQuestions) {
+          showMessage("dashboardMessage", "Impossibile creare un test completo da 5 domande con i contenuti attuali.", false);
+          return;
+        }
+        quizSession = {
+          subject: base.subject,
+          questions,
+          currentIndex: 0,
+          score: 0
+        };
+        renderQuizQuestion({
+          subject: quizSession.subject,
+          question: quizSession.questions[0],
+          index: 0,
+          total: quizSession.questions.length,
+          score: 0,
+          mode: "session"
+        });
+      }
+
+      function handleQuizSelection(event) {
+        const actionButton = event.target.closest("[data-quiz-action]");
+        if (actionButton) {
+          const action = String(actionButton.dataset.quizAction || "");
+          if (action === "next" && quizSession) {
+            const nextIndex = quizSession.currentIndex + 1;
+            if (nextIndex >= quizSession.questions.length) {
+              renderQuizFinalResult();
+              return;
+            }
+            quizSession.currentIndex = nextIndex;
+            renderQuizQuestion({
+              subject: quizSession.subject,
+              question: quizSession.questions[nextIndex],
+              index: nextIndex,
+              total: quizSession.questions.length,
+              score: quizSession.score,
+              mode: "session"
+            });
+          }
+          if (action === "restart-5") {
+            startQuizSession(5);
+          }
+          if (action === "quick-test") {
+            buildQuiz();
+          }
+          return;
+        }
+        const button = event.target.closest(".quiz-option");
+        if (!button) {
+          return;
+        }
+        const quizBox = document.getElementById("quizBox");
+        if (!quizBox || quizBox.dataset.answered === "true") {
+          return;
+        }
+        const selected = String(button.dataset.option || "");
+        const correct = String(quizBox.dataset.correct || "");
+        const options = Array.from(quizBox.querySelectorAll(".quiz-option"));
+        options.forEach((item) => {
+          const value = String(item.dataset.option || "");
+          item.disabled = true;
+          if (value === correct) {
+            item.classList.add("correct");
+          }
+          if (value === selected && value !== correct) {
+            item.classList.add("wrong");
+          }
+        });
+        const feedback = document.getElementById("quizFeedback");
+        const isCorrect = selected === correct;
+        feedback.classList.remove("hidden");
+        feedback.classList.remove("ok", "err");
+        feedback.classList.add(isCorrect ? "ok" : "err");
+        feedback.textContent = isCorrect
+          ? `Risposta corretta: ${correct}`
+          : `Risposta errata. Corretta: ${correct}`;
+        quizBox.dataset.answered = "true";
+        if (quizBox.dataset.mode === "session" && quizSession) {
+          if (isCorrect) {
+            quizSession.score += 1;
+          }
+          const nextButton = document.getElementById("quizNextButton");
+          if (nextButton) {
+            const isLast = quizSession.currentIndex >= quizSession.questions.length - 1;
+            nextButton.classList.remove("hidden");
+            nextButton.textContent = isLast ? "Mostra punteggio finale" : "Prossima domanda";
+          }
+          return;
+        }
       }
 
       function clearMessage(id) {
@@ -422,7 +889,7 @@
 
       function toggleTeacherTopActions() {
         const canReset = Boolean(currentUser && currentUser.role === "teacher");
-        document.getElementById("btnResetSubjects").classList.toggle("hidden", !canReset);
+        document.getElementById("btnClearAll").classList.toggle("hidden", !canReset);
       }
 
       function toggleGuide() {
@@ -521,8 +988,13 @@
             select.value = String(subjects[0].id);
           }
         });
-        refreshQuestionDocuments();
+        handleQuestionSubjectChange();
         renderFileSubjectMapping();
+      }
+
+      function handleQuestionSubjectChange() {
+        refreshQuestionDocuments();
+        resetStudyTools();
       }
 
       function refreshQuestionDocuments() {
@@ -596,6 +1068,35 @@
         refreshQuestionDocuments();
       }
 
+      async function loadAiStatus() {
+        const notice = document.getElementById("aiStatusNotice");
+        notice.className = "";
+        notice.textContent = "";
+        try {
+          const status = await fetchJSON("/ai/status");
+          const uncovered = Array.isArray(status.uncoveredSubjects) ? status.uncoveredSubjects : [];
+          if (!status.aiEnabled) {
+            notice.className = "msg err";
+            notice.textContent =
+              "AI avanzata non attiva: imposta OPENROUTER_API_KEY per risposte migliori e più approfondite.";
+            return;
+          }
+          if (uncovered.length > 0) {
+            const preview = uncovered.slice(0, 4).join(", ");
+            const suffix = uncovered.length > 4 ? ", ..." : "";
+            notice.className = "msg err";
+            notice.textContent =
+              `AI attiva (${status.model}). Materie senza documenti: ${preview}${suffix}. Carica fonti per migliorare precisione e fonti in calce.`;
+            return;
+          }
+          notice.className = "msg ok";
+          notice.textContent = `AI attiva (${status.model}) e copertura documentale completa su tutte le materie.`;
+        } catch {
+          notice.className = "msg err";
+          notice.textContent = "Impossibile verificare lo stato AI in questo momento.";
+        }
+      }
+
       async function quickAccess(role, options = {}) {
         const { silent = false } = options;
         clearMessage("accessMessage");
@@ -667,27 +1168,27 @@
         }
       }
 
-      async function resetSubjects() {
+      async function clearAllData() {
         clearMessage("dashboardMessage");
         if (!currentUser || currentUser.role !== "teacher") {
-          showMessage("dashboardMessage", "Solo i docenti possono resettare le materie.", false);
+          showMessage("dashboardMessage", "Solo i docenti possono usare 'Pulire tutto'.", false);
           return;
         }
         const confirmed = window.confirm(
-          "Confermi il reset totale? Verranno cancellati documenti, domande e crediti di tutte le materie."
+          "Confermi la pulizia completa? Verranno cancellati documenti, domande, crediti, badge e materie personalizzate. Le materie base verranno ricreate automaticamente."
         );
         if (!confirmed) {
           return;
         }
         try {
-          await fetchJSON("/admin/reset-subjects", {
+          await fetchJSON("/admin/clear-all", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ userId: currentUser.id })
           });
           document.getElementById("chatHistory").innerHTML = "";
           document.getElementById("questionResponse").innerHTML = "";
-          showMessage("dashboardMessage", "Reset completato. Tutte le materie sono state azzerate.");
+          showMessage("dashboardMessage", "Pulizia completata. Puoi ricaricare i documenti da zero.");
           await loadDashboard();
         } catch (error) {
           showMessage("dashboardMessage", error.message, false);
@@ -840,6 +1341,8 @@
         await loadStats();
         await loadQuestions();
         await loadDocuments();
+        await loadAiStatus();
+        resetStudyTools();
       }
 
       function logout() {
@@ -856,9 +1359,13 @@
       document.getElementById("btnUploadDoc").addEventListener("click", uploadDocument);
       document.getElementById("btnLogout").addEventListener("click", logout);
       document.getElementById("btnGuide").addEventListener("click", toggleGuide);
-      document.getElementById("btnResetSubjects").addEventListener("click", resetSubjects);
+      document.getElementById("btnClearAll").addEventListener("click", clearAllData);
+      document.getElementById("btnGenerateConceptMap").addEventListener("click", generateConceptMap);
+      document.getElementById("btnGenerateQuiz").addEventListener("click", buildQuiz);
+      document.getElementById("btnGenerateQuiz5").addEventListener("click", () => startQuizSession(5));
       document.getElementById("btnResetGuide").addEventListener("click", resetGuideChecklist);
-      document.getElementById("questionSubject").addEventListener("change", refreshQuestionDocuments);
+      document.getElementById("quizBox").addEventListener("click", handleQuizSelection);
+      document.getElementById("questionSubject").addEventListener("change", handleQuestionSubjectChange);
       document.getElementById("docFiles").addEventListener("change", renderFileSubjectMapping);
       document.getElementById("docAutoSubject").addEventListener("change", renderFileSubjectMapping);
       document.getElementById("docSubject").addEventListener("change", renderFileSubjectMapping);
