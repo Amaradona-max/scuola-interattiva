@@ -250,8 +250,17 @@
           <p class="small">Visibile e utilizzabile solo per utenti docente.</p>
           <input id="docFiles" type="file" multiple accept=".pdf,.docx,.txt,.md,.csv,.json,.html,.htm" />
           <p class="small">Carica da fonte esterna uno o più file: PDF, DOCX, TXT, MD, CSV, JSON, HTML.</p>
+          <label class="small" style="display: flex; align-items: center; gap: 8px; margin-top: 6px;">
+            <input id="docAutoSubject" type="checkbox" style="width: auto; margin-top: 0;" />
+            Assegna automaticamente la materia per ogni file
+          </label>
+          <p class="small">Se attivo, il sistema prova a riconoscere la materia da nome e contenuto file.</p>
           <input id="docTitle" placeholder="Titolo documento" />
           <select id="docSubject"></select>
+          <div id="docFileMapWrap" class="hidden">
+            <p class="small" style="margin: 8px 0 4px;">Mapping manuale file → materia</p>
+            <div id="docFileMap"></div>
+          </div>
           <textarea id="docContent" rows="6" placeholder="Contenuto del documento"></textarea>
           <button id="btnUploadDoc">Carica documento</button>
           <div id="teacherMessage"></div>
@@ -344,6 +353,65 @@
         const el = document.getElementById(id);
         el.className = "";
         el.textContent = "";
+      }
+
+      function parseOptionalId(value) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          return null;
+        }
+        return parsed;
+      }
+
+      function getFileSubjectMappingValues() {
+        return Array.from(document.querySelectorAll("#docFileMap .file-subject-select")).map((select) =>
+          parseOptionalId(select.value)
+        );
+      }
+
+      function renderFileSubjectMapping() {
+        const wrap = document.getElementById("docFileMapWrap");
+        const container = document.getElementById("docFileMap");
+        const files = Array.from(document.getElementById("docFiles").files || []);
+        if (files.length === 0) {
+          wrap.classList.add("hidden");
+          container.innerHTML = "";
+          return;
+        }
+        const previousSelections = getFileSubjectMappingValues();
+        const fallbackSubjectId = parseOptionalId(document.getElementById("docSubject").value);
+        const autoSubjectEnabled = document.getElementById("docAutoSubject").checked;
+        wrap.classList.remove("hidden");
+        container.innerHTML = "";
+        files.forEach((file, index) => {
+          const row = document.createElement("div");
+          row.style.display = "grid";
+          row.style.gridTemplateColumns = "minmax(180px, 1fr) minmax(200px, 1fr)";
+          row.style.gap = "8px";
+          row.style.alignItems = "center";
+          row.style.marginTop = "8px";
+          const fileLabel = document.createElement("span");
+          fileLabel.className = "small";
+          fileLabel.textContent = file.name || `file-${index + 1}`;
+          const select = document.createElement("select");
+          select.className = "file-subject-select";
+          const autoOption = document.createElement("option");
+          autoOption.value = "";
+          autoOption.textContent = autoSubjectEnabled ? "Auto (rilevamento/fallback)" : "Usa materia fallback";
+          select.appendChild(autoOption);
+          subjects.forEach((subject) => {
+            const option = document.createElement("option");
+            option.value = String(subject.id);
+            option.textContent = `${subject.icon || "📘"} ${subject.name}`;
+            select.appendChild(option);
+          });
+          const previous = previousSelections[index];
+          const defaultValue = previous || (autoSubjectEnabled ? null : fallbackSubjectId);
+          select.value = defaultValue ? String(defaultValue) : "";
+          row.appendChild(fileLabel);
+          row.appendChild(select);
+          container.appendChild(row);
+        });
       }
 
       function toggleAuth(visible) {
@@ -454,6 +522,7 @@
           }
         });
         refreshQuestionDocuments();
+        renderFileSubjectMapping();
       }
 
       function refreshQuestionDocuments() {
@@ -672,77 +741,74 @@
         }
         try {
           const fileInput = document.getElementById("docFiles");
+          const autoSubjectEnabled = document.getElementById("docAutoSubject").checked;
           const selectedFiles = Array.from(fileInput.files || []);
+          const mappedSubjects = getFileSubjectMappingValues();
           const subjectId = Number(document.getElementById("docSubject").value);
-          if (!subjectId) {
-            showMessage("teacherMessage", "Seleziona prima una materia.", false);
-            return;
-          }
           if (selectedFiles.length > 0) {
+            if (!subjectId && !autoSubjectEnabled) {
+              const hasManualSelection = mappedSubjects.some((value) => Number(value) > 0);
+              if (!hasManualSelection) {
+                showMessage("teacherMessage", "Seleziona prima una materia oppure assegna manualmente la materia ai file.", false);
+                return;
+              }
+            }
             const allowedExtensions = [".pdf", ".docx", ".txt", ".md", ".csv", ".json", ".html", ".htm"];
             const maxBytes = 10 * 1024 * 1024;
-            const uploadResults = [];
-            for (const file of selectedFiles) {
+            const invalidFiles = [];
+            const validFiles = [];
+            selectedFiles.forEach((file, index) => {
               const lowerName = String(file.name || "").toLowerCase();
               const isAllowed = allowedExtensions.some((ext) => lowerName.endsWith(ext));
               if (!isAllowed) {
-                uploadResults.push({
-                  fileName: file.name || "file",
-                  ok: false,
-                  reason: "Formato non supportato"
-                });
-                continue;
+                invalidFiles.push(`${file.name || "file"} (Formato non supportato)`);
+                return;
               }
               if (Number(file.size || 0) > maxBytes) {
-                uploadResults.push({
-                  fileName: file.name || "file",
-                  ok: false,
-                  reason: "File troppo grande (max 10MB)"
-                });
-                continue;
+                invalidFiles.push(`${file.name || "file"} (File troppo grande: max 10MB)`);
+                return;
               }
-              const form = new FormData();
-              form.append("subjectId", String(subjectId));
-              form.append("uploadedBy", String(currentUser.id));
-              form.append("files", file);
-              try {
-                const result = await fetchJSON("/documents/upload", {
-                  method: "POST",
-                  body: form
-                });
-                uploadResults.push({
-                  fileName: file.name || "file",
-                  ok: true,
-                  uploadedCount: Number(result.uploadedCount || 0),
-                  skippedCount: Number(result.skippedCount || 0)
-                });
-              } catch (error) {
-                uploadResults.push({
-                  fileName: file.name || "file",
-                  ok: false,
-                  reason: error.message || "Errore di caricamento"
-                });
-              }
+              validFiles.push({
+                file,
+                subjectId: parseOptionalId(mappedSubjects[index])
+              });
+            });
+            if (validFiles.length === 0) {
+              showMessage("teacherMessage", `Nessun file valido da caricare. ${invalidFiles.join(", ")}`, false);
+              return;
             }
-            const uploadedCount = uploadResults
-              .filter((item) => item.ok)
-              .reduce((sum, item) => sum + (item.uploadedCount || 0), 0);
-            const skippedCount = uploadResults
-              .filter((item) => !item.ok)
-              .length +
-              uploadResults
-                .filter((item) => item.ok)
-                .reduce((sum, item) => sum + (item.skippedCount || 0), 0);
-            const failedFiles = uploadResults
-              .filter((item) => !item.ok)
-              .map((item) => `${item.fileName} (${item.reason})`);
-            const failedText = failedFiles.length ? ` Errori: ${failedFiles.join(", ")}.` : "";
+            const form = new FormData();
+            if (subjectId) {
+              form.append("subjectId", String(subjectId));
+            }
+            form.append("uploadedBy", String(currentUser.id));
+            form.append("autoAssignSubject", autoSubjectEnabled ? "true" : "false");
+            form.append("fileSubjectIds", JSON.stringify(validFiles.map((item) => item.subjectId || null)));
+            validFiles.forEach((item) => form.append("files", item.file));
+            const result = await fetchJSON("/documents/upload", {
+              method: "POST",
+              body: form
+            });
+            const uploadedCount = Number(result.uploadedCount || 0);
+            const skippedCount = Number(result.skippedCount || 0) + invalidFiles.length;
+            const skippedServer = Array.isArray(result.skipped)
+              ? result.skipped.map((item) => `${item.fileName || "file"} (${item.reason || "Errore"})`)
+              : [];
+            const failedTextItems = [...invalidFiles, ...skippedServer];
+            const failedText = failedTextItems.length ? ` Errori: ${failedTextItems.join(", ")}.` : "";
+            const assignedSubjects = (Array.isArray(result.uploaded) ? result.uploaded : [])
+              .map((item) => `${item.fileName} → ${item.subjectName}`)
+              .slice(0, 6);
+            const assignmentText = assignedSubjects.length
+              ? ` Assegnazioni: ${assignedSubjects.join(", ")}.`
+              : "";
             showMessage(
               "teacherMessage",
-              `File caricati: ${uploadedCount}. File non elaborati: ${skippedCount}.${failedText}`,
+              `File caricati: ${uploadedCount}. File non elaborati: ${skippedCount}.${assignmentText}${failedText}`,
               uploadedCount > 0
             );
             fileInput.value = "";
+            renderFileSubjectMapping();
           } else {
             const payload = {
               title: document.getElementById("docTitle").value.trim(),
@@ -793,6 +859,9 @@
       document.getElementById("btnResetSubjects").addEventListener("click", resetSubjects);
       document.getElementById("btnResetGuide").addEventListener("click", resetGuideChecklist);
       document.getElementById("questionSubject").addEventListener("change", refreshQuestionDocuments);
+      document.getElementById("docFiles").addEventListener("change", renderFileSubjectMapping);
+      document.getElementById("docAutoSubject").addEventListener("change", renderFileSubjectMapping);
+      document.getElementById("docSubject").addEventListener("change", renderFileSubjectMapping);
       document.getElementById("btnHome").addEventListener("click", () => {
         if (currentUser) {
           loadDashboard();

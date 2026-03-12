@@ -42,6 +42,64 @@ function stripHtml(raw) {
   );
 }
 
+function normalizeForMatch(text) {
+  return String(text || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function extractWords(text) {
+  return normalizeForMatch(text)
+    .split(/[^a-z0-9]+/g)
+    .map((word) => word.trim())
+    .filter((word) => word.length >= 3);
+}
+
+function scoreSubjectInText(subject, text) {
+  const normalizedText = normalizeForMatch(text);
+  if (!normalizedText) {
+    return 0;
+  }
+  const name = normalizeForMatch(subject.name);
+  const description = normalizeForMatch(subject.description || "");
+  const nameTokens = extractWords(name);
+  const descriptionTokens = extractWords(description).slice(0, 8);
+  let score = 0;
+  if (name && new RegExp(`\\b${name}\\b`, "i").test(normalizedText)) {
+    score += 16;
+  }
+  nameTokens.forEach((token) => {
+    if (new RegExp(`\\b${token}\\b`, "i").test(normalizedText)) {
+      score += 6;
+    }
+  });
+  descriptionTokens.forEach((token) => {
+    if (new RegExp(`\\b${token}\\b`, "i").test(normalizedText)) {
+      score += 2;
+    }
+  });
+  return score;
+}
+
+function detectSubjectForFile({ fileName, content, subjects }) {
+  const normalizedFileName = normalizeForMatch(fileName);
+  const normalizedContent = normalizeForMatch(content).slice(0, 3000);
+  let winner = null;
+  for (const subject of subjects) {
+    const fileScore = scoreSubjectInText(subject, normalizedFileName);
+    const contentScore = scoreSubjectInText(subject, normalizedContent);
+    const totalScore = fileScore * 2 + contentScore;
+    if (!winner || totalScore > winner.score) {
+      winner = { subjectId: subject.id, score: totalScore };
+    }
+  }
+  if (!winner || winner.score < 8) {
+    return null;
+  }
+  return winner.subjectId;
+}
+
 async function extractFileContent(file) {
   const ext = path.extname(file.originalname || "").toLowerCase();
   const mime = String(file.mimetype || "").toLowerCase();
@@ -327,9 +385,24 @@ function setupRoutes(app) {
     try {
       const subjectId = Number(req.body.subjectId);
       const uploadedBy = Number(req.body.uploadedBy);
+      const autoAssignSubject = String(req.body.autoAssignSubject || "false").toLowerCase() === "true";
+      let fileSubjectIds = [];
+      if (typeof req.body.fileSubjectIds === "string" && req.body.fileSubjectIds.trim().length > 0) {
+        try {
+          const parsed = JSON.parse(req.body.fileSubjectIds);
+          if (!Array.isArray(parsed)) {
+            res.status(400).json({ error: "Formato mapping file non valido" });
+            return;
+          }
+          fileSubjectIds = parsed;
+        } catch {
+          res.status(400).json({ error: "Formato mapping file non valido" });
+          return;
+        }
+      }
       const files = req.files || [];
-      if (!subjectId || !uploadedBy || files.length === 0) {
-        res.status(400).json({ error: "Subject, docente e file sono obbligatori" });
+      if (!uploadedBy || files.length === 0) {
+        res.status(400).json({ error: "Docente e file sono obbligatori" });
         return;
       }
       const user = await get("SELECT id FROM users WHERE id = ?", [uploadedBy]);
@@ -337,14 +410,43 @@ function setupRoutes(app) {
         res.status(401).json({ error: "Sessione non valida. Effettua nuovamente il login." });
         return;
       }
-      const subject = await get("SELECT id FROM subjects WHERE id = ?", [subjectId]);
-      if (!subject) {
+      const subjects = await all("SELECT id, name, description FROM subjects ORDER BY name ASC");
+      if (!Array.isArray(subjects) || subjects.length === 0) {
+        res.status(400).json({ error: "Nessuna materia disponibile per il caricamento." });
+        return;
+      }
+      const subjectIdsSet = new Set(subjects.map((item) => Number(item.id)));
+      const manualSubjectIds = files.map((_, index) => {
+        const raw = Number(fileSubjectIds[index]);
+        if (!Number.isFinite(raw) || raw <= 0) {
+          return null;
+        }
+        return raw;
+      });
+      const invalidManualId = manualSubjectIds.find((id) => id && !subjectIdsSet.has(id));
+      if (invalidManualId) {
+        res.status(400).json({ error: "Una materia manuale selezionata non è valida." });
+        return;
+      }
+      const hasManualSelection = manualSubjectIds.some((id) => Number(id) > 0);
+      if (!autoAssignSubject && !subjectId && !hasManualSelection) {
+        res.status(400).json({ error: "Seleziona una materia fallback oppure assegna almeno una materia manuale." });
+        return;
+      }
+      if (subjectId && !subjectIdsSet.has(subjectId)) {
         res.status(400).json({ error: "Materia non valida. Ricarica la pagina e seleziona di nuovo la materia." });
         return;
       }
+      if (!autoAssignSubject && subjectId) {
+        const subject = await get("SELECT id FROM subjects WHERE id = ?", [subjectId]);
+        if (!subject) {
+          res.status(400).json({ error: "Materia non valida. Ricarica la pagina e seleziona di nuovo la materia." });
+          return;
+        }
+      }
       const created = [];
       const skipped = [];
-      for (const file of files) {
+      for (const [index, file] of files.entries()) {
         try {
           const content = await extractFileContent(file);
           if (!content) {
@@ -354,16 +456,42 @@ function setupRoutes(app) {
             });
             continue;
           }
+          const manualSubjectId = manualSubjectIds[index];
+          const detectedSubjectId = autoAssignSubject
+            ? detectSubjectForFile({
+              fileName: file.originalname || "",
+              content,
+              subjects
+            })
+            : null;
+          const finalSubjectId = manualSubjectId || (autoAssignSubject ? detectedSubjectId || (subjectId || null) : subjectId);
+          if (!finalSubjectId) {
+            skipped.push({
+              fileName: file.originalname,
+              reason: "Materia non riconosciuta automaticamente. Inserisci il nome materia nel file o seleziona una materia di fallback."
+            });
+            continue;
+          }
+          const finalSubject = subjects.find((item) => item.id === finalSubjectId);
+          if (!finalSubject) {
+            skipped.push({
+              fileName: file.originalname,
+              reason: "Materia non valida"
+            });
+            continue;
+          }
           const title = path.basename(file.originalname, path.extname(file.originalname));
           const result = await run(
             "INSERT INTO documents (title, subjectId, uploadedBy, content) VALUES (?, ?, ?, ?)",
-            [title, subjectId, uploadedBy, content]
+            [title, finalSubjectId, uploadedBy, content]
           );
           const document = await get("SELECT * FROM documents WHERE id = ?", [result.id]);
           created.push({
             id: document.id,
             title: document.title,
-            fileName: file.originalname
+            fileName: file.originalname,
+            subjectId: finalSubjectId,
+            subjectName: finalSubject.name
           });
         } catch (error) {
           const constraintError = String(error?.message || "").includes("SQLITE_CONSTRAINT");
@@ -384,7 +512,8 @@ function setupRoutes(app) {
         uploadedCount: created.length,
         skippedCount: skipped.length,
         uploaded: created,
-        skipped
+        skipped,
+        autoAssigned: autoAssignSubject
       });
     } catch (error) {
       next(error);
