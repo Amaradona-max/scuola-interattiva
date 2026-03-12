@@ -263,7 +263,16 @@
 
     <script>
       const API_URL = `${window.location.origin}/api`;
-      let currentUser = JSON.parse(localStorage.getItem("user") || "null");
+      function getSavedUser() {
+        try {
+          return JSON.parse(localStorage.getItem("user") || "null");
+        } catch {
+          localStorage.removeItem("user");
+          return null;
+        }
+      }
+
+      let currentUser = getSavedUser();
       let subjects = [];
       let documents = [];
       let speechRecognition = null;
@@ -384,6 +393,9 @@
             option.textContent = `${s.icon || "📘"} ${s.name}`;
             select.appendChild(option);
           });
+          if (!select.value && subjects.length > 0) {
+            select.value = String(subjects[0].id);
+          }
         });
         refreshQuestionDocuments();
       }
@@ -459,7 +471,8 @@
         refreshQuestionDocuments();
       }
 
-      async function quickAccess(role) {
+      async function quickAccess(role, options = {}) {
+        const { silent = false } = options;
         clearMessage("accessMessage");
         try {
           currentUser = await fetchJSON("/users/quick-access", {
@@ -469,7 +482,9 @@
           });
           localStorage.setItem("user", JSON.stringify(currentUser));
           const roleLabel = currentUser.role === "teacher" ? "Docente" : "Studente";
-          showMessage("accessMessage", `Accesso effettuato come ${roleLabel}.`);
+          if (!silent) {
+            showMessage("accessMessage", `Accesso effettuato come ${roleLabel}.`);
+          }
           await loadDashboard();
         } catch (error) {
           showMessage("accessMessage", error.message, false);
@@ -481,13 +496,18 @@
         try {
           const documentValue = document.getElementById("questionDocument").value;
           const questionText = document.getElementById("questionText").value.trim();
+          const subjectId = Number(document.getElementById("questionSubject").value);
           if (!questionText) {
             showMessage("dashboardMessage", "Scrivi una domanda prima di inviare.", false);
             return;
           }
+          if (!subjectId) {
+            showMessage("dashboardMessage", "Seleziona una materia prima di inviare la domanda.", false);
+            return;
+          }
           const payload = {
             userId: currentUser.id,
-            subjectId: Number(document.getElementById("questionSubject").value),
+            subjectId,
             question: questionText,
             documentId: documentValue ? Number(documentValue) : null,
             learningStyle: "visual"
@@ -732,7 +752,7 @@
           if (currentUser) {
             await loadDashboard();
           } else {
-            toggleAuth(true);
+            await quickAccess("student", { silent: true });
           }
         } catch (error) {
           showMessage("accessMessage", error.message, false);
