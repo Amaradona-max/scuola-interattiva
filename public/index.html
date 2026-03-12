@@ -284,6 +284,26 @@
         el.textContent = text;
       }
 
+      function escapeHtml(text) {
+        return String(text || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      function buildSourcesFooter(sources) {
+        if (!Array.isArray(sources) || sources.length === 0) {
+          return `<br><br><strong>Fonti in calce</strong><br>• Nessuna fonte documentale disponibile.`;
+        }
+        const items = sources.slice(0, 5).map((source, index) => {
+          const title = escapeHtml(source?.title || `Documento ${index + 1}`);
+          const excerpt = escapeHtml(String(source?.excerpt || "").replace(/\s+/g, " ").trim()).slice(0, 170);
+          const suffix = excerpt ? ` — ${excerpt}` : "";
+          return `• [${index + 1}] ${title}${suffix}`;
+        });
+        return `<br><br><strong>Fonti in calce</strong><br>${items.join("<br>")}`;
+      }
+
       function clearMessage(id) {
         const el = document.getElementById(id);
         el.className = "";
@@ -517,19 +537,21 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
           });
-          const sourceLines = Array.isArray(result.sources)
-            ? result.sources.map((source) => `• ${source.title}`).join("<br>")
-            : "";
-          const sourceHtml = sourceLines ? `<br><br><strong>Fonti usate</strong><br>${sourceLines}` : "";
+          const sourceFooter = buildSourcesFooter(result.sources);
           document.getElementById("questionResponse").innerHTML =
-            `<div class="msg ok"><strong>Risposta</strong><br>${result.answer}${sourceHtml}<br><br>Crediti: +${result.creditsEarned}</div>`;
+            `<div class="msg ok"><strong>Risposta</strong><br>${result.answer}${sourceFooter}<br><br>Crediti: +${result.creditsEarned}</div>`;
           const chatHistory = document.getElementById("chatHistory");
           const userBubble = document.createElement("div");
           userBubble.className = "bubble user";
           userBubble.textContent = `Tu: ${payload.question}`;
           const aiBubble = document.createElement("div");
           aiBubble.className = "bubble ai";
-          const sourceText = sourceLines ? `\nFonti:\n${sourceLines.replace(/<br>/g, "\n")}` : "";
+          const sourceText = Array.isArray(result.sources) && result.sources.length
+            ? `\nFonti in calce:\n${result.sources
+              .slice(0, 5)
+              .map((source, index) => `[${index + 1}] ${source.title}`)
+              .join("\n")}`
+            : "\nFonti in calce:\nNessuna fonte documentale disponibile.";
           aiBubble.textContent = `AI: ${result.answer}${sourceText}`;
           chatHistory.prepend(aiBubble);
           chatHistory.prepend(userBubble);

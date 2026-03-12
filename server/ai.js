@@ -289,9 +289,12 @@ async function askAI(question, context = "", learningStyle = "visual") {
     const prompt = [
       "Sei un tutor scolastico per studenti italiani.",
       "Rispondi in italiano in modo chiaro, ordinato e motivante.",
+      "Mantieni massima precisione: usa solo informazioni presenti nel contesto e non fare inferenze non supportate.",
       "Usa prima di tutto gli estratti dei documenti forniti nel contesto.",
       "Se la risposta non è presente nel contesto, dichiaralo esplicitamente e non inventare.",
-      "Quando possibile, cita in forma breve i punti del documento usati.",
+      "Prima fornisci la risposta diretta in 2-6 frasi.",
+      "Subito dopo aggiungi una sezione finale chiamata 'Fonti in calce' con elenco puntato sintetico dei riferimenti usati.",
+      "Ogni fonte deve essere breve e verificabile, senza aggiungere informazioni non presenti nel contesto.",
       `Stile di apprendimento preferito: ${learningStyle}.`,
       context ? `Contesto didattico: ${context}` : "",
       `Domanda dello studente: ${question}`

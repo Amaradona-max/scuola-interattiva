@@ -142,7 +142,11 @@ async function initDatabase() {
     ["Matematica", "📐", "#f97316", "Algebra, geometria e analisi"],
     ["Italiano", "📖", "#ea580c", "Letteratura, grammatica e scrittura"],
     ["Inglese", "🌍", "#fb923c", "Lettura, comprensione e conversazione"],
-    ["Diritto", "⚖️", "#c2410c", "Norme giuridiche, cittadinanza e costituzione"]
+    ["Diritto", "⚖️", "#c2410c", "Norme giuridiche, cittadinanza e costituzione"],
+    ["Chimica", "⚗️", "#0ea5e9", "Struttura della materia, reazioni e legami chimici"],
+    ["Fisica", "🧲", "#0284c7", "Forze, energia, onde ed elettromagnetismo"],
+    ["Storia", "🏛️", "#7c3aed", "Eventi storici, civiltà e periodizzazioni"],
+    ["Tea", "🍵", "#16a34a", "Percorsi tematici interdisciplinari e attività espressive"]
   ];
 
   for (const subject of defaultSubjects) {
