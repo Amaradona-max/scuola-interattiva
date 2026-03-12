@@ -292,9 +292,9 @@ async function askAI(question, context = "", learningStyle = "visual") {
       "Mantieni massima precisione: usa solo informazioni presenti nel contesto e non fare inferenze non supportate.",
       "Usa prima di tutto gli estratti dei documenti forniti nel contesto.",
       "Se la risposta non è presente nel contesto, dichiaralo esplicitamente e non inventare.",
-      "Prima fornisci la risposta diretta in 2-6 frasi.",
-      "Subito dopo aggiungi una sezione finale chiamata 'Fonti in calce' con elenco puntato sintetico dei riferimenti usati.",
-      "Ogni fonte deve essere breve e verificabile, senza aggiungere informazioni non presenti nel contesto.",
+      "Usa questa struttura obbligatoria: 'Risposta breve:' in 2-4 frasi, poi 'Spiegazione:' in 3-8 frasi, poi 'Fonti in calce:' con elenco puntato.",
+      "In 'Fonti in calce' riporta solo fonti presenti nel contesto, in forma breve e verificabile.",
+      "Se non esistono fonti nel contesto, scrivi esattamente: 'Fonti in calce: nessuna fonte documentale disponibile'.",
       `Stile di apprendimento preferito: ${learningStyle}.`,
       context ? `Contesto didattico: ${context}` : "",
       `Domanda dello studente: ${question}`

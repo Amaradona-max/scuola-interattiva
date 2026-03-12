@@ -304,6 +304,42 @@
         return `<br><br><strong>Fonti in calce</strong><br>${items.join("<br>")}`;
       }
 
+      function removeInlineSources(answer) {
+        const text = String(answer || "").trim();
+        const markerIndex = text.toLowerCase().indexOf("fonti in calce");
+        if (markerIndex === -1) {
+          return text;
+        }
+        return text.slice(0, markerIndex).trim();
+      }
+
+      function toHtmlLines(text) {
+        return escapeHtml(String(text || "")).replace(/\n+/g, "<br>");
+      }
+
+      function splitAcademicSections(answer) {
+        const normalized = removeInlineSources(answer);
+        const sentences = normalized
+          .split(/(?<=[.!?])\s+/)
+          .map((item) => item.trim())
+          .filter(Boolean);
+        if (sentences.length === 0) {
+          return {
+            shortAnswer: "Non sono riuscito a generare una risposta valida.",
+            explanation: "Riprova con una domanda più specifica o carica un documento di riferimento."
+          };
+        }
+        const shortAnswer = sentences.slice(0, 2).join(" ");
+        const explanation = sentences.slice(2).join(" ") || "La risposta essenziale è riportata nella sezione precedente.";
+        return { shortAnswer, explanation };
+      }
+
+      function buildAcademicResponse(result) {
+        const { shortAnswer, explanation } = splitAcademicSections(result.answer);
+        const sourceFooter = buildSourcesFooter(result.sources);
+        return `<div class="msg ok"><strong>Risposta breve</strong><br>${toHtmlLines(shortAnswer)}<br><br><strong>Spiegazione</strong><br>${toHtmlLines(explanation)}${sourceFooter}<br><br>Crediti: +${result.creditsEarned}</div>`;
+      }
+
       function clearMessage(id) {
         const el = document.getElementById(id);
         el.className = "";
@@ -537,9 +573,8 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
           });
-          const sourceFooter = buildSourcesFooter(result.sources);
-          document.getElementById("questionResponse").innerHTML =
-            `<div class="msg ok"><strong>Risposta</strong><br>${result.answer}${sourceFooter}<br><br>Crediti: +${result.creditsEarned}</div>`;
+          const normalizedAnswer = removeInlineSources(result.answer);
+          document.getElementById("questionResponse").innerHTML = buildAcademicResponse(result);
           const chatHistory = document.getElementById("chatHistory");
           const userBubble = document.createElement("div");
           userBubble.className = "bubble user";
@@ -552,7 +587,7 @@
               .map((source, index) => `[${index + 1}] ${source.title}`)
               .join("\n")}`
             : "\nFonti in calce:\nNessuna fonte documentale disponibile.";
-          aiBubble.textContent = `AI: ${result.answer}${sourceText}`;
+          aiBubble.textContent = `AI: ${normalizedAnswer}${sourceText}`;
           chatHistory.prepend(aiBubble);
           chatHistory.prepend(userBubble);
           document.getElementById("questionText").value = "";
