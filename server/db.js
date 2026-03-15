@@ -177,17 +177,26 @@ async function initDatabase() {
     )
   `);
 
-  await run(`
-    CREATE TABLE IF NOT EXISTS credits (
-      id ${idColumn},
-      userId INTEGER NOT NULL,
-      amount INTEGER NOT NULL,
-      type TEXT NOT NULL,
-      description TEXT,
-      createdAt ${dateType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
+   await run(`
+     CREATE TABLE IF NOT EXISTS credits (
+       id ${idColumn},
+       userId INTEGER NOT NULL,
+       amount INTEGER NOT NULL,
+       type TEXT NOT NULL,
+       description TEXT,
+       createdAt ${dateType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+     )
+   `);
+
+   // Create indexes for better query performance
+   await run("CREATE INDEX IF NOT EXISTS idx_documents_subjectId ON documents(subjectId)");
+   await run("CREATE INDEX IF NOT EXISTS idx_documents_uploadedBy ON documents(uploadedBy)");
+   await run("CREATE INDEX IF NOT EXISTS idx_documents_createdAt ON documents(createdAt)");
+   await run("CREATE INDEX IF NOT EXISTS idx_questions_userId ON questions(userId)");
+   await run("CREATE INDEX IF NOT EXISTS idx_questions_subjectId ON questions(subjectId)");
+   await run("CREATE INDEX IF NOT EXISTS idx_questions_createdAt ON questions(createdAt)");
+   await run("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)");
 
   await ensureDefaultSubjects();
 }

@@ -4,6 +4,9 @@ import multer from "multer";
 import mammoth from "mammoth";
 import pdfParse from "pdf-parse";
 import path from "path";
+import Joi from "joi";
+import { userSchema, documentSchema, questionSchema, answerSchema, validate } from "./validation/schemas.js";
+import { buildRagContext, normalizeForMatch, extractWords, scoreSubjectInText, detectSubjectForFile, sanitizeText, stripHtml, tokenizeForSearch, extractRequestedArticle, isArticleCountQuestion, splitTextIntoChunks } from "./utils/rag.js";
 
 function isUniqueViolation(error) {
   const message = String(error?.message || "").toLowerCase();
@@ -36,81 +39,6 @@ const upload = multer({
   }
 });
 
-function sanitizeText(text) {
-  return String(text || "")
-    .replace(/\r\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function stripHtml(raw) {
-  return sanitizeText(
-    String(raw || "")
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&nbsp;/gi, " ")
-  );
-}
-
-function normalizeForMatch(text) {
-  return String(text || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-function extractWords(text) {
-  return normalizeForMatch(text)
-    .split(/[^a-z0-9]+/g)
-    .map((word) => word.trim())
-    .filter((word) => word.length >= 3);
-}
-
-function scoreSubjectInText(subject, text) {
-  const normalizedText = normalizeForMatch(text);
-  if (!normalizedText) {
-    return 0;
-  }
-  const name = normalizeForMatch(subject.name);
-  const description = normalizeForMatch(subject.description || "");
-  const nameTokens = extractWords(name);
-  const descriptionTokens = extractWords(description).slice(0, 8);
-  let score = 0;
-  if (name && new RegExp(`\\b${name}\\b`, "i").test(normalizedText)) {
-    score += 16;
-  }
-  nameTokens.forEach((token) => {
-    if (new RegExp(`\\b${token}\\b`, "i").test(normalizedText)) {
-      score += 6;
-    }
-  });
-  descriptionTokens.forEach((token) => {
-    if (new RegExp(`\\b${token}\\b`, "i").test(normalizedText)) {
-      score += 2;
-    }
-  });
-  return score;
-}
-
-function detectSubjectForFile({ fileName, content, subjects }) {
-  const normalizedFileName = normalizeForMatch(fileName);
-  const normalizedContent = normalizeForMatch(content).slice(0, 3000);
-  let winner = null;
-  for (const subject of subjects) {
-    const fileScore = scoreSubjectInText(subject, normalizedFileName);
-    const contentScore = scoreSubjectInText(subject, normalizedContent);
-    const totalScore = fileScore * 2 + contentScore;
-    if (!winner || totalScore > winner.score) {
-      winner = { subjectId: subject.id, score: totalScore };
-    }
-  }
-  if (!winner || winner.score < 8) {
-    return null;
-  }
-  return winner.subjectId;
-}
-
 async function extractFileContent(file) {
   const ext = path.extname(file.originalname || "").toLowerCase();
   const mime = String(file.mimetype || "").toLowerCase();
@@ -138,163 +66,6 @@ async function extractFileContent(file) {
   throw new Error("Formato non supportato");
 }
 
-function splitTextIntoChunks(text, chunkSize = 900, overlap = 180) {
-  const normalized = sanitizeText(text);
-  if (!normalized) {
-    return [];
-  }
-  const paragraphs = normalized
-    .split(/\n{2,}/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (paragraphs.length === 0) {
-    return [];
-  }
-  const chunks = [];
-  let current = "";
-  for (const paragraph of paragraphs) {
-    const candidate = current ? `${current}\n\n${paragraph}` : paragraph;
-    if (candidate.length <= chunkSize) {
-      current = candidate;
-      continue;
-    }
-    if (current) {
-      chunks.push(current);
-      const tail = current.slice(Math.max(0, current.length - overlap)).trim();
-      current = tail ? `${tail}\n\n${paragraph}` : paragraph;
-      if (current.length > chunkSize) {
-        chunks.push(current.slice(0, chunkSize));
-        current = current.slice(Math.max(0, chunkSize - overlap));
-      }
-      continue;
-    }
-    chunks.push(paragraph.slice(0, chunkSize));
-    current = paragraph.slice(Math.max(0, chunkSize - overlap));
-  }
-  if (current) {
-    chunks.push(current);
-  }
-  return chunks.map((item) => item.trim()).filter(Boolean);
-}
-
-function tokenizeForSearch(text) {
-  return String(text || "")
-    .toLowerCase()
-    .split(/[^a-zàèéìòù0-9]+/i)
-    .map((word) => word.trim())
-    .filter((word) => /^\d{1,3}$/.test(word) || word.length >= 4);
-}
-
-function extractRequestedArticle(question) {
-  const match = String(question || "").match(/(?:art\.?|articolo)\s*(\d{1,3})\b/i);
-  if (!match?.[1]) {
-    return null;
-  }
-  const value = Number(match[1]);
-  if (!Number.isFinite(value) || value < 1 || value > 300) {
-    return null;
-  }
-  return value;
-}
-
-function isArticleCountQuestion(question) {
-  const normalized = String(question || "").toLowerCase();
-  return (
-    /(quanti|quante)\s+articol/.test(normalized) ||
-    /numero\s+(totale\s+)?(degli?\s+)?articol/.test(normalized) ||
-    /totale\s+articol/.test(normalized) ||
-    /compost[aoei]\s+(?:da\s+)?\d{0,4}\s*articol/.test(normalized) ||
-    /da\s+quanti\s+articoli/.test(normalized)
-  );
-}
-
-function buildRagContext(question, documents) {
-  const tokens = tokenizeForSearch(question);
-  const normalizedQuestion = normalizeForMatch(question);
-  const keyPhrase = tokens.slice(0, 3).join(" ");
-  const isCountQuestion = isArticleCountQuestion(question);
-  const requestedArticle = extractRequestedArticle(question);
-  const articleHeadings = [];
-  const rankedChunks = [];
-  for (const doc of documents) {
-    const normalizedTitle = normalizeForMatch(doc.title || "");
-    if (isCountQuestion) {
-      const matches = Array.from(String(doc.content || "").matchAll(/(?:^|\n)\s*Art\.?\s*(\d{1,3})\b/gim))
-        .map((item) => Number(item[1]))
-        .filter((value) => Number.isFinite(value) && value >= 20 && value <= 200);
-      if (matches.length > 0) {
-        articleHeadings.push(Math.max(...matches));
-      }
-    }
-    const chunks = splitTextIntoChunks(doc.content, 900, 180);
-    chunks.forEach((chunk, index) => {
-      const lower = chunk.toLowerCase();
-      const matchedTokenCount = tokens.reduce((acc, token) => {
-        if (/^\d{1,3}$/.test(token)) {
-          return acc + (new RegExp(`\\b${token}\\b`).test(lower) ? 1 : 0);
-        }
-        return acc + (lower.includes(token) ? 1 : 0);
-      }, 0);
-      const keywordScore = matchedTokenCount * 2;
-      const coverageBoost = tokens.length > 0 ? (matchedTokenCount / tokens.length) * 5 : 0;
-      const titleBoost = tokens.some((token) => normalizedTitle.includes(token)) ? 4 : 0;
-      const phraseBoost = keyPhrase && lower.includes(keyPhrase) ? 5 : 0;
-      const questionSentenceBoost = normalizedQuestion && normalizeForMatch(chunk).includes(normalizedQuestion) ? 4 : 0;
-      const articleBoost = isCountQuestion && /art\.?\s*\d{1,3}|articolo\s+\d{1,3}/i.test(chunk) ? 3 : 0;
-      const edgeBoost = isCountQuestion && (index === 0 || index === chunks.length - 1) ? 2 : 0;
-      const exactArticleBoost = requestedArticle && new RegExp(`(?:^|\\n)\\s*Art\\.?\\s*${requestedArticle}\\b`, "i").test(chunk)
-        ? 12
-        : 0;
-      const hasOtherArticleHeading = requestedArticle && new RegExp("(?:^|\\n)\\s*Art\\.?\\s*(\\d{1,3})\\b", "i").test(chunk)
-        && !new RegExp(`(?:^|\\n)\\s*Art\\.?\\s*${requestedArticle}\\b`, "i").test(chunk);
-      const otherArticlePenalty = hasOtherArticleHeading ? -4 : 0;
-      const tocPenalty = /indice|titolo\s+[ivx]+|sezione\s+[ivx]+/i.test(lower) ? -3 : 0;
-      const score = keywordScore
-        + coverageBoost
-        + titleBoost
-        + phraseBoost
-        + questionSentenceBoost
-        + articleBoost
-        + edgeBoost
-        + exactArticleBoost
-        + otherArticlePenalty
-        + tocPenalty;
-      rankedChunks.push({
-        score,
-        chunk,
-        chunkIndex: index + 1,
-        id: doc.id,
-        title: doc.title
-      });
-    });
-  }
-  rankedChunks.sort((a, b) => b.score - a.score);
-  const topChunks = rankedChunks.filter((item) => item.score > 0).slice(0, 6);
-  const fallbackChunks = topChunks.length > 0 ? topChunks : rankedChunks.slice(0, 3);
-  const header = articleHeadings.length
-    ? `Indicazione dai documenti: il numero massimo di articolo rilevato è ${Math.max(...articleHeadings)}.`
-    : "";
-  const context = [header, ...fallbackChunks
-    .map((item) => `[Documento: ${item.title} · Estratto ${item.chunkIndex}]\n${item.chunk}`)
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-  const sources = [];
-  const seen = new Set();
-  fallbackChunks.forEach((item) => {
-    if (seen.has(item.id)) {
-      return;
-    }
-    seen.add(item.id);
-    sources.push({
-      documentId: item.id,
-      title: item.title,
-      excerpt: item.chunk.slice(0, 220)
-    });
-  });
-  return { context: context.slice(0, 6500), sources };
-}
-
 function setupRoutes(app) {
   async function clearAllDataForTeacher(userId) {
     if (!userId) {
@@ -320,36 +91,36 @@ function setupRoutes(app) {
     };
   }
 
-  app.post("/api/users/quick-access", async (req, res, next) => {
-    try {
+app.post("/api/users/quick-access", validate(Joi.object({ role: Joi.string().valid('student', 'teacher').default('student') })), async (req, res, next) => {
+  try {
+    const requestedRole = String(req.body?.role || "student").toLowerCase();
+    const role = requestedRole === "teacher" ? "teacher" : "student";
+    const username = role === "teacher" ? "accesso_docente" : "accesso_studente";
+    const email = role === "teacher" ? "accesso_docente@scuola.app" : "accesso_studente@scuola.app";
+    const existing = await get("SELECT * FROM users WHERE username = ?", [username]);
+    if (existing) {
+      res.json(sanitizeUser(existing));
+      return;
+    }
+    await run(
+      "INSERT INTO users (username, email, password, role, learningStyle) VALUES (?, ?, ?, ?, ?)",
+      [username, email, "accesso_libero", role, "visual"]
+    );
+    const created = await get("SELECT * FROM users WHERE username = ?", [username]);
+    res.status(201).json(sanitizeUser(created));
+  } catch (error) {
+    if (isUniqueViolation(error)) {
       const requestedRole = String(req.body?.role || "student").toLowerCase();
-      const role = requestedRole === "teacher" ? "teacher" : "student";
-      const username = role === "teacher" ? "accesso_docente" : "accesso_studente";
-      const email = role === "teacher" ? "accesso_docente@scuola.app" : "accesso_studente@scuola.app";
-      const existing = await get("SELECT * FROM users WHERE username = ?", [username]);
-      if (existing) {
-        res.json(sanitizeUser(existing));
+      const username = requestedRole === "teacher" ? "accesso_docente" : "accesso_studente";
+      const user = await get("SELECT * FROM users WHERE username = ?", [username]);
+      if (user) {
+        res.json(sanitizeUser(user));
         return;
       }
-      await run(
-        "INSERT INTO users (username, email, password, role, learningStyle) VALUES (?, ?, ?, ?, ?)",
-        [username, email, "accesso_libero", role, "visual"]
-      );
-      const created = await get("SELECT * FROM users WHERE username = ?", [username]);
-      res.status(201).json(sanitizeUser(created));
-    } catch (error) {
-      if (isUniqueViolation(error)) {
-        const requestedRole = String(req.body?.role || "student").toLowerCase();
-        const username = requestedRole === "teacher" ? "accesso_docente" : "accesso_studente";
-        const user = await get("SELECT * FROM users WHERE username = ?", [username]);
-        if (user) {
-          res.json(sanitizeUser(user));
-          return;
-        }
-      }
-      next(error);
     }
-  });
+    next(error);
+  }
+});
 
   app.post("/api/admin/clear-all", async (req, res, next) => {
     try {
@@ -467,23 +238,19 @@ function setupRoutes(app) {
     }
   });
 
-  app.post("/api/documents", async (req, res, next) => {
-    try {
-      const { title, subjectId, uploadedBy, content } = req.body;
-      if (!title || !subjectId || !uploadedBy || !content) {
-        res.status(400).json({ error: "Campi documento mancanti" });
-        return;
-      }
-      const result = await run(
-        "INSERT INTO documents (title, subjectId, uploadedBy, content) VALUES (?, ?, ?, ?)",
-        [title.trim(), subjectId, uploadedBy, content.trim()]
-      );
-      const doc = await get("SELECT * FROM documents WHERE id = ?", [result.id]);
-      res.status(201).json(doc);
-    } catch (error) {
-      next(error);
-    }
-  });
+app.post("/api/documents", validate(documentSchema), async (req, res, next) => {
+  try {
+    const { title, subjectId, uploadedBy, content } = req.body;
+    const result = await run(
+      "INSERT INTO documents (title, subjectId, uploadedBy, content) VALUES (?, ?, ?, ?)",
+      [title.trim(), subjectId, uploadedBy, content.trim()]
+    );
+    const doc = await get("SELECT * FROM documents WHERE id = ?", [result.id]);
+    res.status(201).json(doc);
+  } catch (error) {
+    next(error);
+  }
+});
 
   app.post("/api/documents/upload", upload.array("files", 10), async (req, res, next) => {
     try {
@@ -624,58 +391,54 @@ function setupRoutes(app) {
     }
   });
 
-  app.post("/api/questions/ask", async (req, res, next) => {
-    try {
-      const { userId, subjectId, question, documentId = null, learningStyle = "visual" } = req.body;
-      if (!userId || !subjectId || !question) {
-        res.status(400).json({ error: "Campi obbligatori mancanti" });
-        return;
-      }
-      const cleanQuestion = question.trim();
-      let selectedDocumentId = documentId ? Number(documentId) : null;
-      let docsForRag = [];
-      if (selectedDocumentId) {
-        const doc = await get(
-          "SELECT id, title, content FROM documents WHERE id = ? AND subjectId = ?",
-          [selectedDocumentId, subjectId]
-        );
-        if (doc) {
-          docsForRag = [doc];
-        } else {
-          selectedDocumentId = null;
-        }
-      }
-      if (!selectedDocumentId) {
-        docsForRag = await all(
-          "SELECT id, title, content FROM documents WHERE subjectId = ? ORDER BY createdAt DESC LIMIT 8",
-          [subjectId]
-        );
-      }
-      const rag = buildRagContext(cleanQuestion, docsForRag);
-      const aiResult = await askAI(cleanQuestion, rag.context, learningStyle);
-      const creditsEarned = aiResult.qualityScore * 5;
-      const saveResult = await run(
-        `INSERT INTO questions (userId, documentId, subjectId, question, answer, qualityScore, creditsEarned)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [userId, selectedDocumentId, subjectId, cleanQuestion, aiResult.answer, aiResult.qualityScore, creditsEarned]
+app.post("/api/questions/ask", validate(questionSchema), async (req, res, next) => {
+  try {
+    const { userId, subjectId, question, documentId = null, learningStyle = "visual" } = req.body;
+    const cleanQuestion = question.trim();
+    let selectedDocumentId = documentId ? Number(documentId) : null;
+    let docsForRag = [];
+    if (selectedDocumentId) {
+      const doc = await get(
+        "SELECT id, title, content FROM documents WHERE id = ? AND subjectId = ?",
+        [selectedDocumentId, subjectId]
       );
-      await run("UPDATE users SET totalCredits = totalCredits +  ? WHERE id = ?", [creditsEarned, userId]);
-      await run(
-        "INSERT INTO credits (userId, amount, type, description) VALUES (?, ?, ?, ?)",
-        [userId, creditsEarned, "question", "Crediti per domanda AI"]
-      );
-      res.status(201).json({
-        questionId: saveResult.id,
-        answer: aiResult.answer,
-        qualityScore: aiResult.qualityScore,
-        creditsEarned,
-        feedback: aiResult.feedback,
-        sources: rag.sources
-      });
-    } catch (error) {
-      next(error);
+      if (doc) {
+        docsForRag = [doc];
+      } else {
+        selectedDocumentId = null;
+      }
     }
-  });
+    if (!selectedDocumentId) {
+      docsForRag = await all(
+        "SELECT id, title, content FROM documents WHERE subjectId = ? ORDER BY createdAt DESC LIMIT 8",
+        [subjectId]
+      );
+    }
+    const rag = buildRagContext(cleanQuestion, docsForRag);
+    const aiResult = await askAI(cleanQuestion, rag.context, learningStyle);
+    const creditsEarned = aiResult.qualityScore * 5;
+    const saveResult = await run(
+      `INSERT INTO questions (userId, documentId, subjectId, question, answer, qualityScore, creditsEarned)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [userId, selectedDocumentId, subjectId, cleanQuestion, aiResult.answer, aiResult.qualityScore, creditsEarned]
+    );
+    await run("UPDATE users SET totalCredits = totalCredits +  ? WHERE id = ?", [creditsEarned, userId]);
+    await run(
+      "INSERT INTO credits (userId, amount, type, description) VALUES (?, ?, ?, ?)",
+      [userId, creditsEarned, "question", "Crediti per domanda AI"]
+    );
+    res.status(201).json({
+      questionId: saveResult.id,
+      answer: aiResult.answer,
+      qualityScore: aiResult.qualityScore,
+      creditsEarned,
+      feedback: aiResult.feedback,
+      sources: rag.sources
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
   app.get("/api/questions/user/:userId", async (req, res, next) => {
     try {

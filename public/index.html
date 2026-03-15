@@ -15,6 +15,56 @@
         --ok: #166534;
         --err: #991b1b;
       }
+      
+      /* Loading Styles */
+      .loading-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(255, 255, 255, 0.8);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        border-radius: inherit;
+      }
+      
+      .global-loading-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(255, 255, 255, 0.9);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+      }
+      
+      .loading-spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid var(--primary);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 12px;
+      }
+      
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      
+      .loading-text {
+        font-size: 14px;
+        color: var(--text);
+        font-weight: 500;
+      }
       * {
         box-sizing: border-box;
         font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -261,6 +311,8 @@
           <button id="btnHome">Home</button>
           <button id="btnGuide">Guida</button>
           <button id="btnClearAll" class="hidden">Pulire tutto</button>
+          <button id="btnGoUpload" class="hidden">Carica file</button>
+          <button id="btnSwitchTeacher" class="hidden">Passa a Docente</button>
           <button id="btnLogout" class="hidden">Logout</button>
         </div>
       </div>
@@ -355,36 +407,14 @@
       </section>
     </div>
 
-    <script>
-      const API_URL = `${window.location.origin}/api`;
-      function getSavedUser() {
-        try {
-          return JSON.parse(localStorage.getItem("user") || "null");
-        } catch {
-          localStorage.removeItem("user");
-          return null;
-        }
-      }
-
-      let currentUser = getSavedUser();
+    <script type="module">
+      const API_URL = "/api";
+      let currentUser = JSON.parse(localStorage.getItem("user") || "null");
       let subjects = [];
       let documents = [];
       let speechRecognition = null;
       let isVoiceActive = false;
       let quizSession = null;
-      const stopWords = new Set([
-        "alla", "alle", "anche", "avere", "con", "come", "dalla", "dalle", "degli", "della", "delle",
-        "dello", "dentro", "dopo", "dove", "fare", "fino", "gli", "hanno", "il", "in", "la", "le", "lo",
-        "ma", "nei", "nel", "nella", "nelle", "nello", "non", "noi", "per", "piu", "poi", "puo", "quale",
-        "quali", "quando", "questo", "quindi", "senza", "sono", "sopra", "sotto", "sua", "sue", "sul", "sulla",
-        "sulle", "sullo", "tra", "una", "uno", "un", "voi", "che", "del", "dei", "di", "da", "ed", "e"
-      ]);
-
-      function showMessage(id, text, ok = true) {
-        const el = document.getElementById(id);
-        el.className = `msg ${ok ? "ok" : "err"}`;
-        el.textContent = text;
-      }
 
       function escapeHtml(text) {
         return String(text || "")
@@ -476,6 +506,17 @@
           .normalize("NFD")
           .replace(/[\u0300-\u036f]/g, "");
       }
+
+      const stopWords = new Set([
+        "anche", "avere", "dalla", "dalle", "della", "delle", "dello", "degli", "dentro", "dopo",
+        "essere", "fatto", "fatti", "finale", "fino", "forma", "hanno", "lavoro", "materia", "molto",
+        "nelle", "negli", "nostro", "oltre", "parte", "perche", "quale", "quali", "quello", "questa",
+        "queste", "questi", "questo", "senza", "sopra", "sotto", "stato", "stati", "stessa", "stesso",
+        "tutte", "tutti", "dove", "come", "sono", "dati", "dato", "testo", "nelle", "negli", "della",
+        "delle", "degli", "dello", "delle", "sulla", "sulle", "sullo", "degli", "alla", "alle", "allo",
+        "agli", "dalla", "dalle", "dallo", "dagli", "dalla", "delle", "nelle", "nella", "nello", "negli",
+        "with", "that", "this", "from", "have", "into", "your", "about", "their", "there", "which"
+      ]);
 
       function extractTopKeywords(text, limit = 14) {
         const counts = new Map();
@@ -816,6 +857,12 @@
         }
       }
 
+      function showMessage(id, text, success = true) {
+        const el = document.getElementById(id);
+        el.className = success ? "msg ok" : "msg err";
+        el.textContent = String(text || "");
+      }
+
       function clearMessage(id) {
         const el = document.getElementById(id);
         el.className = "";
@@ -885,11 +932,14 @@
         document.getElementById("auth").classList.toggle("hidden", !visible);
         document.getElementById("dashboard").classList.toggle("hidden", visible);
         document.getElementById("btnLogout").classList.toggle("hidden", visible);
+        document.getElementById("btnSwitchTeacher").classList.toggle("hidden", visible || !currentUser || currentUser.role === "teacher");
       }
 
       function toggleTeacherTopActions() {
         const canReset = Boolean(currentUser && currentUser.role === "teacher");
         document.getElementById("btnClearAll").classList.toggle("hidden", !canReset);
+        document.getElementById("btnSwitchTeacher").classList.toggle("hidden", !currentUser || currentUser.role === "teacher");
+        document.getElementById("btnGoUpload").classList.toggle("hidden", !canReset);
       }
 
       function toggleGuide() {
@@ -1098,8 +1148,8 @@
       }
 
       async function quickAccess(role, options = {}) {
-        const { silent = false } = options;
-        clearMessage("accessMessage");
+        const { silent = false, messageTarget = "accessMessage" } = options;
+        clearMessage(messageTarget);
         try {
           currentUser = await fetchJSON("/users/quick-access", {
             method: "POST",
@@ -1109,11 +1159,28 @@
           localStorage.setItem("user", JSON.stringify(currentUser));
           const roleLabel = currentUser.role === "teacher" ? "Docente" : "Studente";
           if (!silent) {
-            showMessage("accessMessage", `Accesso effettuato come ${roleLabel}.`);
+            showMessage(messageTarget, `Accesso effettuato come ${roleLabel}.`);
           }
           await loadDashboard();
+          if (currentUser.role === "teacher") {
+            const panel = document.getElementById("teacherPanel");
+            if (panel) {
+              panel.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+          }
         } catch (error) {
-          showMessage("accessMessage", error.message, false);
+          showMessage(messageTarget, error.message, false);
+        }
+      }
+
+      async function openTeacherUpload() {
+        if (!currentUser || currentUser.role !== "teacher") {
+          await quickAccess("teacher", { messageTarget: "dashboardMessage" });
+          return;
+        }
+        const panel = document.getElementById("teacherPanel");
+        if (panel) {
+          panel.scrollIntoView({ behavior: "smooth", block: "start" });
         }
       }
 
@@ -1332,17 +1399,24 @@
         }
       }
 
-      async function loadDashboard() {
-        await ensureCurrentUserValid();
-        toggleAuth(false);
-        toggleTeacherPanel();
-        toggleTeacherTopActions();
-        await loadSubjects();
-        await loadStats();
-        await loadQuestions();
-        await loadDocuments();
-        await loadAiStatus();
-        resetStudyTools();
+      async       function loadDashboard() {
+        return ensureCurrentUserValid()
+          .then(() => {
+            toggleAuth(false);
+            toggleTeacherPanel();
+            toggleTeacherTopActions();
+            return Promise.all([
+              loadSubjects(),
+              loadStats(),
+              loadQuestions(),
+              loadDocuments(),
+              loadAiStatus()
+            ]);
+          })
+          .then(resetStudyTools)
+          .catch(error => {
+            showMessage("accessMessage", error.message, false);
+          });
       }
 
       function logout() {
@@ -1360,6 +1434,8 @@
       document.getElementById("btnLogout").addEventListener("click", logout);
       document.getElementById("btnGuide").addEventListener("click", toggleGuide);
       document.getElementById("btnClearAll").addEventListener("click", clearAllData);
+      document.getElementById("btnSwitchTeacher").addEventListener("click", () => quickAccess("teacher", { messageTarget: "dashboardMessage" }));
+      document.getElementById("btnGoUpload").addEventListener("click", openTeacherUpload);
       document.getElementById("btnGenerateConceptMap").addEventListener("click", generateConceptMap);
       document.getElementById("btnGenerateQuiz").addEventListener("click", buildQuiz);
       document.getElementById("btnGenerateQuiz5").addEventListener("click", () => startQuizSession(5));
@@ -1377,20 +1453,20 @@
         toggleAuth(true);
       });
 
-      (async () => {
-        try {
-          initGuideChecklist();
-          toggleTeacherTopActions();
-          await loadSubjects();
-          if (currentUser) {
-            await loadDashboard();
-          } else {
-            await quickAccess("student", { silent: true });
-          }
-        } catch (error) {
-          showMessage("accessMessage", error.message, false);
-        }
-      })();
+       (async () => {
+         try {
+           initGuideChecklist();
+           toggleTeacherTopActions();
+           await loadSubjects();
+           if (currentUser) {
+             await loadDashboard();
+             return;
+           }
+           toggleAuth(true);
+         } catch (error) {
+           showMessage("accessMessage", error.message, false);
+         }
+       })();
     </script>
   </body>
   </html>
