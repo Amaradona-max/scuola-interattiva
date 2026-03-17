@@ -877,6 +877,104 @@
         return parsed;
       }
 
+      function normalizeDocKey(text) {
+        return normalizeForToken(String(text || ""))
+          .replace(/[^a-z0-9]+/g, " ")
+          .trim();
+      }
+
+      function getUniqueDocumentsByTitleAndSubject(items) {
+        const map = new Map();
+        (Array.isArray(items) ? items : []).forEach((doc) => {
+          const key = `${normalizeDocKey(doc.title)}::${Number(doc.subjectId)}`;
+          if (!map.has(key)) {
+            map.set(key, doc);
+          }
+        });
+        return Array.from(map.values());
+      }
+
+      function fileNameToTitle(fileName) {
+        return String(fileName || "")
+          .replace(/\.[^.]+$/, "")
+          .replace(/[_-]+/g, " ")
+          .trim();
+      }
+
+      function detectSubjectFromFileName(fileName) {
+        const normalizedName = normalizeDocKey(fileName);
+        if (!normalizedName) {
+          return null;
+        }
+        const aliasesBySubject = {
+          diritto: ["costituzione", "legge", "codice", "articolo", "decreto", "giurisprudenza", "norma"],
+          matematica: ["algebra", "geometria", "analisi", "equazione", "funzione", "trigonometria"],
+          italiano: ["letteratura", "grammatica", "poesia", "manzoni", "dante", "italiano"],
+          inglese: ["english", "grammar", "speaking", "reading", "listening", "inglese"],
+          fisica: ["fisica", "meccanica", "energia", "forza", "moto", "termodinamica"],
+          chimica: ["chimica", "atomo", "molecola", "reazione", "stechiometria", "organica"],
+          storia: ["storia", "rinascimento", "medioevo", "guerra", "rivoluzione", "novecento"],
+          geografia: ["geografia", "continenti", "clima", "territorio", "cartografia"]
+        };
+        let winner = null;
+        subjects.forEach((subject) => {
+          const subjectName = normalizeDocKey(subject.name);
+          const description = normalizeDocKey(subject.description);
+          const descriptionTokens = description.split(" ").filter((token) => token.length >= 4).slice(0, 8);
+          const aliasTokens = aliasesBySubject[subjectName] || [];
+          const allTokens = [subjectName, ...descriptionTokens, ...aliasTokens].filter(Boolean);
+          let score = 0;
+          allTokens.forEach((token) => {
+            if (token && normalizedName.includes(token)) {
+              score += token === subjectName ? 8 : 4;
+            }
+          });
+          if (score > 0 && (!winner || score > winner.score)) {
+            winner = { subjectId: Number(subject.id), score };
+          }
+        });
+        if (!winner || winner.score < 6) {
+          return null;
+        }
+        return winner.subjectId;
+      }
+
+      function setQuestionContextBySubjectAndTitle(subjectId, title = "") {
+        const normalizedTitle = normalizeDocKey(title);
+        if (!subjectId) {
+          return;
+        }
+        const questionSubject = document.getElementById("questionSubject");
+        questionSubject.value = String(subjectId);
+        refreshQuestionDocuments();
+        if (!normalizedTitle) {
+          return;
+        }
+        const candidate = documents.find((doc) =>
+          Number(doc.subjectId) === Number(subjectId) &&
+          normalizeDocKey(doc.title) === normalizedTitle
+        );
+        if (candidate) {
+          document.getElementById("questionDocument").value = String(candidate.id);
+        }
+      }
+
+      function applyAutoMetadataFromSelectedFiles(files) {
+        if (!Array.isArray(files) || files.length === 0) {
+          return;
+        }
+        const firstFile = files[0];
+        const firstTitle = fileNameToTitle(firstFile.name);
+        if (firstTitle) {
+          document.getElementById("docTitle").value = firstTitle;
+        }
+        const detectedSubjectId = detectSubjectFromFileName(firstFile.name || "");
+        if (detectedSubjectId) {
+          document.getElementById("docSubject").value = String(detectedSubjectId);
+          setQuestionContextBySubjectAndTitle(detectedSubjectId, firstTitle);
+        }
+      }
+
       function getFileSubjectMappingValues() {
         return Array.from(document.querySelectorAll("#docFileMap .file-subject-select")).map((select) =>
           parseOptionalId(select.value)
@@ -892,11 +990,12 @@
           container.innerHTML = "";
           return;
         }
+        applyAutoMetadataFromSelectedFiles(files);
         const previousSelections = getFileSubjectMappingValues();
         const fallbackSubjectId = parseOptionalId(document.getElementById("docSubject").value);
         const autoSubjectEnabled = document.getElementById("docAutoSubject").checked;
-        wrap.classList.remove("hidden");
         container.innerHTML = "";
+        let hasManualSelection = false;
         files.forEach((file, index) => {
           const row = document.createElement("div");
           row.style.display = "grid";
@@ -907,6 +1006,25 @@
           const fileLabel = document.createElement("span");
           fileLabel.className = "small";
           fileLabel.textContent = file.name || `file-${index + 1}`;
+          const detectedSubjectId = detectSubjectFromFileName(file.name || "");
+          const previous = previousSelections[index];
+          const defaultValue = previous || detectedSubjectId || (autoSubjectEnabled ? null : fallbackSubjectId);
+          row.appendChild(fileLabel);
+          if (detectedSubjectId) {
+            const detectedSubject = subjects.find((subject) => Number(subject.id) === Number(detectedSubjectId));
+            const fixedSubject = document.createElement("span");
+            fixedSubject.className = "small";
+            fixedSubject.textContent = `${detectedSubject?.icon || "📘"} ${detectedSubject?.name || "Materia riconosciuta"}`;
+            const hiddenInput = document.createElement("input");
+            hiddenInput.type = "hidden";
+            hiddenInput.className = "file-subject-select";
+            hiddenInput.value = String(detectedSubjectId);
+            row.appendChild(fixedSubject);
+            row.appendChild(hiddenInput);
+            container.appendChild(row);
+            return;
+          }
+          hasManualSelection = true;
           const select = document.createElement("select");
           select.className = "file-subject-select";
           const autoOption = document.createElement("option");
@@ -919,13 +1037,11 @@
             option.textContent = `${subject.icon || "📘"} ${subject.name}`;
             select.appendChild(option);
           });
-          const previous = previousSelections[index];
-          const defaultValue = previous || (autoSubjectEnabled ? null : fallbackSubjectId);
           select.value = defaultValue ? String(defaultValue) : "";
-          row.appendChild(fileLabel);
           row.appendChild(select);
           container.appendChild(row);
         });
+        wrap.classList.toggle("hidden", !hasManualSelection);
       }
 
       function toggleAuth(visible) {
@@ -1053,13 +1169,32 @@
         const filtered = selectedSubjectId
           ? documents.filter((doc) => Number(doc.subjectId) === selectedSubjectId)
           : documents;
+        const uniqueFiltered = getUniqueDocumentsByTitleAndSubject(filtered);
         select.innerHTML = `<option value="">RAG automatico su tutti i documenti della materia</option>`;
-        filtered.forEach((doc) => {
+        uniqueFiltered.forEach((doc) => {
           const option = document.createElement("option");
           option.value = doc.id;
           option.textContent = `${doc.title} · ${doc.subjectName}`;
           select.appendChild(option);
         });
+      }
+
+      function handleQuestionDocumentChange() {
+        const selectedDocumentId = Number(document.getElementById("questionDocument").value);
+        if (!selectedDocumentId) {
+          return;
+        }
+        const selectedDoc = documents.find((doc) => Number(doc.id) === selectedDocumentId);
+        if (!selectedDoc) {
+          return;
+        }
+        const subjectSelect = document.getElementById("questionSubject");
+        const targetSubjectId = Number(selectedDoc.subjectId);
+        if (Number(subjectSelect.value) !== targetSubjectId) {
+          subjectSelect.value = String(targetSubjectId);
+          refreshQuestionDocuments();
+          document.getElementById("questionDocument").value = String(selectedDocumentId);
+        }
       }
 
       async function loadStats() {
@@ -1108,14 +1243,19 @@
 
       async function loadDocuments() {
         documents = await fetchJSON("/documents");
+        const uniqueDocuments = getUniqueDocumentsByTitleAndSubject(documents);
         const list = document.getElementById("docsList");
         list.innerHTML = "";
-        documents.forEach((doc) => {
+        uniqueDocuments.forEach((doc) => {
           const li = document.createElement("li");
           li.textContent = `${doc.title} · ${doc.subjectName} · ${doc.teacherName}`;
           list.appendChild(li);
         });
         refreshQuestionDocuments();
+        if (uniqueDocuments.length > 0) {
+          const latestDoc = uniqueDocuments[0];
+          setQuestionContextBySubjectAndTitle(latestDoc.subjectId, latestDoc.title);
+        }
       }
 
       async function loadAiStatus() {
@@ -1210,23 +1350,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
           });
-          const normalizedAnswer = removeInlineSources(result.answer);
           document.getElementById("questionResponse").innerHTML = buildAcademicResponse(result);
-          const chatHistory = document.getElementById("chatHistory");
-          const userBubble = document.createElement("div");
-          userBubble.className = "bubble user";
-          userBubble.textContent = `Tu: ${payload.question}`;
-          const aiBubble = document.createElement("div");
-          aiBubble.className = "bubble ai";
-          const sourceText = Array.isArray(result.sources) && result.sources.length
-            ? `\nFonti in calce:\n${result.sources
-              .slice(0, 5)
-              .map((source, index) => `[${index + 1}] ${source.title}`)
-              .join("\n")}`
-            : "\nFonti in calce:\nNessuna fonte documentale disponibile.";
-          aiBubble.textContent = `AI: ${normalizedAnswer}${sourceText}`;
-          chatHistory.prepend(aiBubble);
-          chatHistory.prepend(userBubble);
           document.getElementById("questionText").value = "";
           await loadStats();
           await loadQuestions();
@@ -1375,6 +1499,13 @@
               `File caricati: ${uploadedCount}. File non elaborati: ${skippedCount}.${assignmentText}${failedText}`,
               uploadedCount > 0
             );
+            const firstUploaded = Array.isArray(result.uploaded) && result.uploaded.length > 0 ? result.uploaded[0] : null;
+            if (firstUploaded) {
+              document.getElementById("docTitle").value = firstUploaded.title || "";
+              if (firstUploaded.subjectId) {
+                document.getElementById("docSubject").value = String(firstUploaded.subjectId);
+              }
+            }
             fileInput.value = "";
             renderFileSubjectMapping();
           } else {
@@ -1394,6 +1525,14 @@
           document.getElementById("docTitle").value = "";
           document.getElementById("docContent").value = "";
           await loadDocuments();
+          if (selectedFiles.length > 0) {
+            const firstName = selectedFiles[0]?.name || "";
+            const firstTitle = fileNameToTitle(firstName);
+            const firstSubjectId = parseOptionalId(document.getElementById("docSubject").value);
+            if (firstSubjectId) {
+              setQuestionContextBySubjectAndTitle(firstSubjectId, firstTitle);
+            }
+          }
         } catch (error) {
           showMessage("teacherMessage", error.message, false);
         }
@@ -1442,6 +1581,7 @@
       document.getElementById("btnResetGuide").addEventListener("click", resetGuideChecklist);
       document.getElementById("quizBox").addEventListener("click", handleQuizSelection);
       document.getElementById("questionSubject").addEventListener("change", handleQuestionSubjectChange);
+      document.getElementById("questionDocument").addEventListener("change", handleQuestionDocumentChange);
       document.getElementById("docFiles").addEventListener("change", renderFileSubjectMapping);
       document.getElementById("docAutoSubject").addEventListener("change", renderFileSubjectMapping);
       document.getElementById("docSubject").addEventListener("change", renderFileSubjectMapping);
@@ -1456,6 +1596,7 @@
        (async () => {
          try {
            initGuideChecklist();
+           document.getElementById("docAutoSubject").checked = true;
            toggleTeacherTopActions();
            await loadSubjects();
            if (currentUser) {

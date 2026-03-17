@@ -57,6 +57,32 @@ function scoreSubjectInText(subject, text) {
   return score;
 }
 
+function scoreSubjectAliases(subject, text) {
+  const normalizedText = normalizeForMatch(text);
+  if (!normalizedText) {
+    return 0;
+  }
+  const aliasesBySubject = {
+    diritto: ["legge", "leggi", "costituzione", "codice", "decreto", "articolo", "norma", "norme", "giurisprudenza", "parlamento", "cittadinanza"],
+    matematica: ["equazione", "equazioni", "funzione", "funzioni", "teorema", "teoremi", "algebra", "geometria", "analisi", "calcolo"],
+    italiano: ["letteratura", "poesia", "grammatica", "narrativa", "autore", "romanzo", "testo argomentativo"],
+    inglese: ["english", "grammar", "vocabulary", "reading", "listening", "speaking", "present perfect"],
+    fisica: ["forza", "forze", "energia", "moto", "velocita", "accelerazione", "termodinamica", "elettricita"],
+    chimica: ["atomo", "atomi", "molecola", "molecole", "reazione", "reazioni", "tavola periodica", "elemento", "elementi"],
+    storia: ["medioevo", "rinascimento", "rivoluzione", "guerra", "impero", "civilta", "novecento"],
+    geografia: ["continente", "continenti", "territorio", "clima", "cartografia", "popolazione", "paesaggio"]
+  };
+  const subjectName = normalizeForMatch(subject.name);
+  const aliases = aliasesBySubject[subjectName] || [];
+  let score = 0;
+  aliases.forEach((alias) => {
+    if (new RegExp(`\\b${normalizeForMatch(alias)}\\b`, "i").test(normalizedText)) {
+      score += 6;
+    }
+  });
+  return score;
+}
+
 /**
  * Detects subject for a file based on filename and content
  * @param {Object} params - Parameters containing fileName, content, and subjects
@@ -64,12 +90,13 @@ function scoreSubjectInText(subject, text) {
  */
 function detectSubjectForFile({ fileName, content, subjects }) {
   const normalizedFileName = normalizeForMatch(fileName);
-  const normalizedContent = normalizeForMatch(content).slice(0, 3000);
+  const normalizedContent = normalizeForMatch(content).slice(0, 12000);
   let winner = null;
   for (const subject of subjects) {
     const fileScore = scoreSubjectInText(subject, normalizedFileName);
     const contentScore = scoreSubjectInText(subject, normalizedContent);
-    const totalScore = fileScore * 2 + contentScore;
+    const aliasScore = scoreSubjectAliases(subject, `${normalizedFileName} ${normalizedContent}`);
+    const totalScore = fileScore * 2 + contentScore + aliasScore;
     if (!winner || totalScore > winner.score) {
       winner = { subjectId: subject.id, score: totalScore };
     }

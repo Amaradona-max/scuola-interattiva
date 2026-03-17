@@ -241,9 +241,18 @@ app.post("/api/users/quick-access", validate(Joi.object({ role: Joi.string().val
 app.post("/api/documents", validate(documentSchema), async (req, res, next) => {
   try {
     const { title, subjectId, uploadedBy, content } = req.body;
+    const cleanTitle = title.trim();
+    const existing = await get(
+      "SELECT id FROM documents WHERE lower(title) = lower(?) AND subjectId = ? AND uploadedBy = ? LIMIT 1",
+      [cleanTitle, subjectId, uploadedBy]
+    );
+    if (existing) {
+      res.status(409).json({ error: "Documento già caricato per questa materia." });
+      return;
+    }
     const result = await run(
       "INSERT INTO documents (title, subjectId, uploadedBy, content) VALUES (?, ?, ?, ?)",
-      [title.trim(), subjectId, uploadedBy, content.trim()]
+      [cleanTitle, subjectId, uploadedBy, content.trim()]
     );
     const doc = await get("SELECT * FROM documents WHERE id = ?", [result.id]);
     res.status(201).json(doc);
@@ -352,6 +361,17 @@ app.post("/api/documents", validate(documentSchema), async (req, res, next) => {
             continue;
           }
           const title = path.basename(file.originalname, path.extname(file.originalname));
+          const duplicate = await get(
+            "SELECT id FROM documents WHERE lower(title) = lower(?) AND subjectId = ? AND uploadedBy = ? LIMIT 1",
+            [title, finalSubjectId, uploadedBy]
+          );
+          if (duplicate) {
+            skipped.push({
+              fileName: file.originalname,
+              reason: "Documento già presente in questa materia"
+            });
+            continue;
+          }
           const result = await run(
             "INSERT INTO documents (title, subjectId, uploadedBy, content) VALUES (?, ?, ?, ?)",
             [title, finalSubjectId, uploadedBy, content]
