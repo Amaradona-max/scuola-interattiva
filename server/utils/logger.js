@@ -2,6 +2,38 @@
 import { createLogger, format, transports } from "winston";
 import { v4 as uuidv4 } from "uuid";
 
+const isVercel = Boolean(process.env.VERCEL);
+const loggerTransports = [
+  new transports.Console({
+    format: format.combine(
+      format.colorize(),
+      format.printf(
+        ({ timestamp, level, message, ...meta }) => {
+          const metaString = Object.keys(meta).length
+            ? JSON.stringify(meta, null, 2)
+            : "";
+          return `[${timestamp}] ${level}: ${message} ${metaString}`;
+        }
+      )
+    )
+  })
+];
+if (!isVercel) {
+  loggerTransports.push(
+    new transports.File({
+      filename: "logs/error.log",
+      level: "error",
+      maxsize: 5242880,
+      maxFiles: 5
+    }),
+    new transports.File({
+      filename: "logs/combined.log",
+      maxsize: 5242880,
+      maxFiles: 5
+    })
+  );
+}
+
 // Create a logger instance
 const logger = createLogger({
   level: process.env.NODE_ENV === "production" ? "info" : "debug",
@@ -12,35 +44,7 @@ const logger = createLogger({
     format.json()
   ),
   defaultMeta: { service: "scuola-interattiva-api" },
-  transports: [
-    // Console transport for development
-    new transports.Console({
-      format: format.combine(
-        format.colorize(),
-        format.printf(
-          ({ timestamp, level, message, ...meta }) => {
-            const metaString = Object.keys(meta).length
-              ? JSON.stringify(meta, null, 2)
-              : "";
-            return `[${timestamp}] ${level}: ${message} ${metaString}`;
-          }
-        )
-      )
-    }),
-    // File transport for errors
-    new transports.File({ 
-      filename: "logs/error.log", 
-      level: "error",
-      maxsize: 5242880, // 5MB
-      maxFiles: 5
-    }),
-    // File transport for all logs
-    new transports.File({ 
-      filename: "logs/combined.log",
-      maxsize: 5242880, // 5MB
-      maxFiles: 5
-    })
-  ],
+  transports: loggerTransports,
   exitOnError: false, // Don't exit on handled exceptions
 });
 

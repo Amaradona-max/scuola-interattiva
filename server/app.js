@@ -15,10 +15,12 @@ dotenv.config({ override: true });
 function createApp() {
   const app = express();
   
-  // Ensure logs directory exists
-  const logsDir = path.join(process.cwd(), "logs");
-  if (!fs.existsSync(logsDir)) {
-    fs.mkdirSync(logsDir, { recursive: true });
+  const logsDir = process.env.VERCEL ? path.join("/tmp", "logs") : path.join(process.cwd(), "logs");
+  try {
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+    }
+  } catch {
   }
   
   app.use(
